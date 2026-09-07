@@ -446,7 +446,22 @@
   </div>
 </div>
 
+<!-- Animate.css for modern animations -->
+<link href="https://cdnjs.cloudflare.com/ajax/libs/animate.css/4.1.1/animate.min.css" rel="stylesheet">
+
 <!-- Main Application Script (Pure isolated JS) -->
 <script type="module" src="app.js"></script>
+
+<!-- Typing indicator animation -->
+<style>
+@keyframes typing-pulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+.typing-indicator span {
+  animation: typing-pulse 1.5s infinite;
+  animation-delay: calc(0.1s * var(--i));
+}
+</style>
 </body>
 </html>

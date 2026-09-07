@@ -68,6 +68,15 @@
   max-width: 78%;
   line-height: 1.5;
   word-break: break-word;
+  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+}
+.chat-bubble-enter {
+  transform: translateY(10px);
+  opacity: 0;
+}
+.chat-bubble-enter-active {
+  transform: translateY(0);
+  opacity: 1;
 }
 
 .chat-bubble pre {

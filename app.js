@@ -2698,6 +2698,8 @@ export function appendChatMessage(role, content, meta = null, saveToDb = true) {
 
   const row = document.createElement('div');
   row.className = `d-flex align-items-end gap-2 mb-3 ${role === 'user' ? 'flex-row-reverse' : ''}`;
+  row.style.opacity = "0";
+  row.style.transform = "translateY(10px)";
 
   const avatar = document.createElement('span');
   avatar.className = `rounded-circle text-white d-inline-flex align-items-center justify-content-center flex-shrink-0 chat-avatar ${role === 'user' ? 'bg-primary' : ''}`;
@@ -2745,6 +2747,14 @@ export function appendChatMessage(role, content, meta = null, saveToDb = true) {
   row.appendChild(avatar);
   row.appendChild(bubble);
   container.appendChild(row);
+  
+  // Animate message entry
+  setTimeout(() => {
+    row.style.transition = "opacity 0.3s ease, transform 0.3s ease";
+    row.style.opacity = "1";
+    row.style.transform = "translateY(0)";
+  }, 10);
+  
   container.scrollTop = container.scrollHeight;
 
   const msgObj = {
@@ -2763,6 +2773,32 @@ export function appendChatMessage(role, content, meta = null, saveToDb = true) {
   if (role === 'ai' && state.config?.app?.voice?.autoSpeak) {
     speakSpeech(content);
   }
+}
+
+export function showTypingIndicator() {
+  if (!isBrowser) return;
+  const container = document.getElementById('chatMessages');
+  if (!container || document.getElementById('typingBubble')) return;
+
+  const char = getActiveCharacter();
+  const thinkingEmoji = char?.emotions?.thinking || '🤔';
+  const charColor = char?.color || 'var(--app-primary)';
+
+  const row = document.createElement('div');
+  row.className = 'd-flex align-items-center gap-2 mb-3';
+  row.id = 'typingBubble';
+  row.innerHTML = `
+    <span class="rounded-circle text-white d-inline-flex align-items-center justify-content-center flex-shrink-0 typing-avatar" style="background-color: ${escapeHtml(charColor)};">${thinkingEmoji}</span>
+    <div class="card bg-body-tertiary border p-2 rounded-4">
+      <div class="typing-indicator d-flex gap-1">
+        <span style="--i:1"></span>
+        <span style="--i:2"></span>
+        <span style="--i:3"></span>
+      </div>
+    </div>
+  `;
+  container.appendChild(row);
+  container.scrollTop = container.scrollHeight;
 }
 
 export function showTypingIndicator() {
@@ -3106,6 +3142,9 @@ export async function init() {
       const intent = await detectIntent(q, state);
       const res = await executeTool(intent, q, state);
 
+      // Simulate human-like response delay
+      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
+        
       const toolCall = parseToolCall(res.text);
       if (toolCall) {
         const chainRes = await executeTool(toolCall.tool, toolCall.params, state);
@@ -3119,6 +3158,16 @@ export async function init() {
       hideTypingIndicator();
       setCharacterEmotion('error');
       appendChatMessage('ai', `I encountered an issue executing your request: ${err.message}`);
+        
+      // Enterprise error logging
+      console.error(`[Enterprise Error] ${err.message}`, err.stack);
+      if (db) {
+        db.logHistory('error', {
+          message: err.message,
+          stack: err.stack,
+          timestamp: Date.now()
+        });
+      }
     }
   };
 
