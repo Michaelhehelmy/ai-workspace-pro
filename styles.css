@@ -1,0 +1,201 @@
+/* ==========================================================================
+   AI Workspace Pro - Modern CSS Stylesheet
+   ========================================================================== */
+
+:root {
+  --app-primary: #4f46e5;
+  --sidebar-default-width: 280px;
+  --sidebar-min-width: 200px;
+  --sidebar-max-width: 500px;
+}
+
+/* --------------------------------------------------------------------------
+   Layout & Container
+   -------------------------------------------------------------------------- */
+#sidebar {
+  width: var(--sidebar-default-width);
+  min-width: var(--sidebar-min-width);
+  max-width: var(--sidebar-max-width);
+  transition: width 0.05s ease-out;
+  position: relative;
+}
+
+/* Resize handle for sidebar */
+#resizeHandle {
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  z-index: 1050;
+}
+
+#resizeHandle > div {
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 36px;
+  border-radius: 2px;
+  background: var(--bs-border-color);
+  opacity: 0.6;
+  transition: background 0.15s ease, opacity 0.15s ease, height 0.15s ease;
+}
+
+#resizeHandle:hover > div,
+#resizeHandle.resizing > div {
+  background: var(--bs-primary);
+  opacity: 1;
+  height: 48px;
+}
+
+/* --------------------------------------------------------------------------
+   Chat Area & Messages
+   -------------------------------------------------------------------------- */
+#pane-chat {
+  height: 0;
+}
+
+#chatMessages {
+  scroll-behavior: smooth;
+}
+
+.chat-bubble {
+  max-width: 78%;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.chat-bubble pre {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  overflow-x: auto;
+  font-size: 0.875rem;
+}
+
+[data-bs-theme="dark"] .chat-bubble pre {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.chat-bubble code {
+  font-size: 0.875em;
+  padding: 0.15em 0.35em;
+  border-radius: 0.25rem;
+}
+
+.chat-bubble table {
+  width: 100%;
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  border-collapse: collapse;
+}
+
+.chat-bubble table th,
+.chat-bubble table td {
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--bs-border-color);
+  font-size: 0.875rem;
+}
+
+.chat-bubble table th {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-bs-theme="dark"] .chat-bubble table th {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* --------------------------------------------------------------------------
+   Avatars & Badges
+   -------------------------------------------------------------------------- */
+.avatar-header {
+  width: 44px;
+  height: 44px;
+  font-size: 1.25rem;
+}
+
+.chat-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 1rem;
+}
+
+.typing-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 1rem;
+}
+
+.list-avatar {
+  width: 42px;
+  height: 42px;
+  font-size: 1.2rem;
+}
+
+.tool-icon {
+  width: 40px;
+  height: 40px;
+  font-size: 1.15rem;
+}
+
+/* --------------------------------------------------------------------------
+   Data Explorer Table
+   -------------------------------------------------------------------------- */
+.explorer-table-container {
+  max-height: 540px;
+}
+
+/* --------------------------------------------------------------------------
+   Config Editor & History
+   -------------------------------------------------------------------------- */
+#configHistoryList {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* --------------------------------------------------------------------------
+   Toasts
+   -------------------------------------------------------------------------- */
+#toastContainer {
+  z-index: 1090;
+}
+
+/* --------------------------------------------------------------------------
+   Custom Scrollbar
+   -------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bs-body-bg);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--bs-border-color);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bs-secondary);
+}
+
+/* --------------------------------------------------------------------------
+   Test Runner Styles
+   -------------------------------------------------------------------------- */
+.test-pass { color: var(--bs-success, #198754); }
+.test-fail { color: var(--bs-danger, #dc3545); }
+.test-running { color: var(--bs-primary, #0d6efd); }
+pre.test-pre {
+  background: var(--bs-tertiary-bg, #f8f9fa);
+  padding: 10px;
+  border-radius: 5px;
+  max-height: 200px;
+  overflow-y: auto;
+}

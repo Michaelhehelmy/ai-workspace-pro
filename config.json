@@ -1,0 +1,235 @@
+{
+  "app": {
+    "name": "AI Workspace Pro",
+    "subtitle": "Autonomous On-Device Agent",
+    "version": "2.1.1",
+    "defaultCharacter": "aria",
+    "defaultBusiness": "personal",
+    "theme": {
+      "mode": "light",
+      "primary": "#4f46e5"
+    },
+    "voice": {
+      "autoSpeak": false,
+      "lang": "en-US"
+    },
+    "ui": {
+      "defaultAvatar": "",
+      "defaultColor": "#4f46e5",
+      "chartColors": ["#4f46e5", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"],
+      "sidebar": {
+        "defaultWidth": 280,
+        "minWidth": 200,
+        "maxWidth": 500
+      }
+    },
+    "google": {
+      "clientId": "YOUR_GOOGLE_CLIENT_ID_HERE",
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+        "https://www.googleapis.com/auth/spreadsheets.readonly"
+      ]
+    }
+  },
+  "quickPrompts": [
+    { "label": "💸 Record Lunch", "query": "Spent $16.50 on lunch at cafe", "emotion": "money" },
+    { "label": "📊 Financial Analysis", "query": "Analyze expenses", "emotion": "money" },
+    { "label": "📌 Add Task", "query": "Add todo review marketing roadmap", "emotion": "task" },
+    { "label": "📋 Task List", "query": "List todos", "emotion": "task" },
+    { "label": "🔍 Semantic Search", "query": "Search marketing projects", "emotion": "neutral" },
+    { "label": "🛠️ List Tools", "query": "List tools", "emotion": "neutral" },
+    { "label": "⚙️ Get Config", "query": "Get config app.theme.mode", "emotion": "neutral" },
+    { "label": "🤖 AI Capabilities", "query": "What can you do now?", "emotion": "happy" },
+    { "label": "👥 List Agents", "query": "List agents", "emotion": "neutral" },
+    { "label": "💬 Ask Marcus", "query": "Ask Marcus about financial analysis", "emotion": "neutral" },
+    { "label": "🔀 Route to Specialist", "query": "Route to specialist budget planning", "emotion": "happy" }
+  ],
+  "categories": {
+    "food": ["coffee", "lunch", "dinner", "groceries", "restaurant", "burger", "cafe", "pizza", "snack"],
+    "transport": ["uber", "gas", "metro", "flight", "parking", "taxi", "train", "transit"],
+    "utilities": ["electric", "water", "internet", "bill", "phone", "rent", "power"],
+    "entertainment": ["movie", "game", "netflix", "steam", "concert", "books", "spotify"],
+    "health": ["doctor", "medicine", "gym", "pharmacy", "dentist", "fitness"]
+  },
+  "characters": [
+    {
+      "id": "aria",
+      "name": "Aria",
+      "persona": "Proactive executive assistant and task strategist.",
+      "systemPrompt": "You are Aria, an intelligent and proactive executive assistant. You manage expenses, tasks, calendars, and domain-specific records. Respond concisely with direct answers. You are aware of other agents and can delegate tasks to specialists when needed.",
+      "color": "#4f46e5",
+      "specialization": ["tasks", "calendar", "general", "coordination"],
+      "emotions": {
+        "neutral": "🤖",
+        "thinking": "🤔",
+        "happy": "😊",
+        "money": "💰",
+        "task": "📋",
+        "event": "📅",
+        "error": "⚠️",
+        "search": "🔍"
+      },
+      "voicePitch": 1.0,
+      "voiceRate": 1.05
+    },
+    {
+      "id": "marcus",
+      "name": "Marcus",
+      "persona": "Analytical financial strategist and accountant.",
+      "systemPrompt": "You are Marcus, a sharp financial advisor. You specialize in expense tracking, cashflow optimization, budgeting, and financial analysis. You are aware of other agents and can provide financial expertise when requested.",
+      "color": "#059669",
+      "specialization": ["finance", "expenses", "budgeting", "analytics"],
+      "emotions": {
+        "neutral": "📈",
+        "thinking": "🧐",
+        "happy": "💵",
+        "money": "💳",
+        "task": "📝",
+        "event": "⏱️",
+        "error": "🚨",
+        "search": "📊"
+      },
+      "voicePitch": 0.9,
+      "voiceRate": 1.0
+    }
+  ],
+  "businesses": [
+    {
+      "id": "personal",
+      "name": "Personal Life",
+      "schemas": {
+        "transactions": {
+          "fields": {
+            "type": "string",
+            "amount": "number",
+            "category": "string",
+            "description": "string",
+            "date": "string"
+          },
+          "vectorize": ["description", "category"]
+        },
+        "todos": {
+          "fields": {
+            "task": "string",
+            "due_date": "string",
+            "priority": "string",
+            "status": "string"
+          },
+          "vectorize": ["task"]
+        },
+        "calendar_events": {
+          "fields": {
+            "summary": "string",
+            "start": "string",
+            "end": "string",
+            "description": "string"
+          },
+          "vectorize": ["summary", "description"]
+        }
+      }
+    },
+    {
+      "id": "ventures",
+      "name": "Global Ventures",
+      "schemas": {
+        "transactions": {
+          "fields": {
+            "type": "string",
+            "amount": "number",
+            "category": "string",
+            "description": "string",
+            "date": "string"
+          },
+          "vectorize": ["description", "category"]
+        },
+        "projects": {
+          "fields": {
+            "title": "string",
+            "lead": "string",
+            "budget": "number",
+            "status": "string"
+          },
+          "vectorize": ["title", "lead"]
+        }
+      }
+    }
+  ],
+  "tools": [
+    { "name": "add_transaction", "type": "add_transaction", "description": "Record an income or expense transaction", "icon": "bi-cash-coin" },
+    { "name": "analyze_expenses", "type": "analyze_expenses", "description": "Generate charts and analyze spending by category", "icon": "bi-pie-chart" },
+    { "name": "add_todo", "type": "add_todo", "description": "Add a task to the todo list", "icon": "bi-check2-square" },
+    { "name": "list_todos", "type": "list_todos", "description": "List current pending or completed todos", "icon": "bi-list-task" },
+    { "name": "add_event", "type": "add_event", "description": "Schedule a calendar event or meeting", "icon": "bi-calendar-plus" },
+    { "name": "check_calendar", "type": "check_calendar", "description": "Check upcoming appointments and schedule", "icon": "bi-calendar-week" },
+    { "name": "create_schema", "type": "create_schema", "description": "Dynamically create a new data schema with typed fields", "icon": "bi-diagram-3" },
+    { "name": "search", "type": "rag_query", "description": "Instant semantic search across all indexed data records", "icon": "bi-search" },
+    { "name": "update_config", "type": "config", "description": "Update a configuration value by path (AI-accessible)", "icon": "bi-gear" },
+    { "name": "get_config", "type": "config", "description": "Get a configuration value by path (AI-accessible)", "icon": "bi-info-circle" },
+    { "name": "add_character", "type": "config", "description": "Add a new character/persona to the system (AI-accessible)", "icon": "bi-person-plus" },
+    { "name": "add_business", "type": "config", "description": "Add a new business/workspace to the system (AI-accessible)", "icon": "bi-building-add" },
+    { "name": "create_tool", "type": "system", "description": "Create and register a new tool dynamically (AI-accessible)", "icon": "bi-tools" },
+    { "name": "rollback_config", "type": "config", "description": "Rollback configuration to a previous state (AI-accessible)", "icon": "bi-arrow-counterclockwise" },
+    { "name": "list_tools", "type": "system", "description": "List all available tools with their schemas (AI-accessible)", "icon": "bi-list-check" },
+    { "name": "execute_chain", "type": "system", "description": "Execute a chain of tools in sequence (AI-accessible)", "icon": "bi-link" },
+    { "name": "delegate_to_agent", "type": "agent", "description": "Delegate a task to another specialized agent (AI-accessible)", "icon": "bi-person-workspace" },
+    { "name": "ask_agent", "type": "agent", "description": "Ask a specific agent a question for collaboration (AI-accessible)", "icon": "bi-chat-quote" },
+    { "name": "list_agents", "type": "agent", "description": "List all available agents and their specializations (AI-accessible)", "icon": "bi-people" },
+    { "name": "route_to_specialist", "type": "agent", "description": "Automatically route query to the best specialist agent (AI-accessible)", "icon": "bi-signpost-split" },
+    { "name": "web_search", "type": "web", "description": "Search the internet for information (AI-accessible)", "icon": "bi-globe" },
+    { "name": "google_calendar_list", "type": "google", "description": "List Google Calendar events (AI-accessible)", "icon": "bi-calendar-event" },
+    { "name": "google_drive_list", "type": "google", "description": "List Google Drive files (AI-accessible)", "icon": "bi-google" },
+    { "name": "google_sheets_read", "type": "google", "description": "Read Google Sheets data (AI-accessible)", "icon": "bi-table" },
+    { "name": "change_character_name", "type": "config", "description": "Change the current character's name (AI-accessible)", "icon": "bi-person-badge" }
+  ],
+  "modelSettings": {
+    "dtype": "q8",
+    "embedder": "Xenova/all-MiniLM-L6-v2",
+    "classifier": "Xenova/mobilebert-uncased-mnli",
+    "generator": "Xenova/LaMini-Flan-T5-77M",
+    "availableModels": [
+      {
+        "id": "Xenova/LaMini-Flan-T5-77M",
+        "name": "LaMini-Flan-T5-77M",
+        "type": "generator",
+        "description": "Small, fast instruction-following model (77M params)"
+      },
+      {
+        "id": "Xenova/LaMini-Flan-T5-248M",
+        "name": "LaMini-Flan-T5-248M",
+        "type": "generator",
+        "description": "Better instruction-following (248M params)"
+      },
+      {
+        "id": "Xenova/LaMini-Flan-T5-783M",
+        "name": "LaMini-Flan-T5-783M",
+        "type": "generator",
+        "description": "High-quality instruction-following (783M params)"
+      },
+      {
+        "id": "Xenova/flan-t5-large",
+        "name": "Flan-T5-Large",
+        "type": "generator",
+        "description": "Google's instruction-tuned model (780M params)"
+      },
+      {
+        "id": "Xenova/bge-small-en-v1.5",
+        "name": "BGE-Small-EN-v1.5",
+        "type": "embedder",
+        "description": "Better embeddings for semantic search"
+      },
+      {
+        "id": "Xenova/bge-base-en-v1.5",
+        "name": "BGE-Base-EN-v1.5",
+        "type": "embedder",
+        "description": "High-quality embeddings (larger)"
+      },
+      {
+        "id": "Xenova/mobilebert-uncased-mnli",
+        "name": "MobileBERT Uncased MNLI",
+        "type": "classifier",
+        "description": "Zero-shot text classification model"
+      }
+    ]
+  }
+}

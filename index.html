@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+<title>AI Workspace Pro</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤖</text></svg>">
+
+<!-- Bootstrap 5.3 CSS & Bootstrap Icons -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+<link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+<link href="styles.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body class="bg-body-tertiary">
+
+<div class="d-flex vh-100 overflow-hidden" id="mainContainer">
+
+  <!-- Sidebar -->
+  <div class="offcanvas-lg offcanvas-start bg-body border-end d-flex flex-column p-3" tabindex="-1" id="sidebar">
+  
+  <!-- Resize Handle -->
+  <div id="resizeHandle">
+    <div></div>
+  </div>
+    <div class="d-flex align-items-center justify-content-between mb-3">
+      <div class="d-flex align-items-center gap-2">
+        <i class="bi bi-cpu-fill text-primary fs-4"></i>
+        <div>
+          <strong class="d-block text-truncate" id="appBrandName">AI Workspace</strong>
+          <small class="text-body-secondary d-block" id="appBrandSubtitle">On-Device Agent</small>
+        </div>
+      </div>
+      <button type="button" class="btn-close d-lg-none" data-bs-dismiss="offcanvas" data-bs-target="#sidebar"></button>
+    </div>
+
+    <!-- Navigation Pills -->
+    <ul class="nav nav-pills flex-column gap-1 mb-3" id="workspaceTabs" role="tablist">
+      <li class="nav-item">
+        <button class="nav-link active d-flex align-items-center gap-2 w-100 text-start" id="tab-chat-btn" data-bs-toggle="pill" data-bs-target="#pane-chat" type="button" role="tab">
+          <i class="bi bi-chat-dots-fill"></i> Chat
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-explorer-btn" data-bs-toggle="pill" data-bs-target="#pane-explorer" type="button" role="tab">
+          <i class="bi bi-database-fill-gear"></i> Data Explorer
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-characters-btn" data-bs-toggle="pill" data-bs-target="#pane-characters" type="button" role="tab">
+          <i class="bi bi-person-bounding-box"></i> Characters
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-businesses-btn" data-bs-toggle="pill" data-bs-target="#pane-businesses" type="button" role="tab">
+          <i class="bi bi-buildings-fill"></i> Businesses
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-tools-btn" data-bs-toggle="pill" data-bs-target="#pane-tools" type="button" role="tab">
+          <i class="bi bi-tools"></i> Tools
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-models-btn" data-bs-toggle="pill" data-bs-target="#pane-models" type="button" role="tab">
+          <i class="bi bi-gpu-card"></i> Models
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-config-btn" data-bs-toggle="pill" data-bs-target="#pane-config" type="button" role="tab">
+          <i class="bi bi-gear-wide-connected"></i> Config
+        </button>
+      </li>
+    </ul>
+
+    <!-- Bottom Controls -->
+    <div class="mt-auto d-flex flex-column gap-2 pt-2 border-top">
+      <!-- Google Sign-In -->
+      <div id="googleSignInContainer" class="mb-2">
+        <button id="googleSignInBtn" class="btn btn-sm btn-outline-primary w-100 d-flex align-items-center justify-content-center gap-2" type="button">
+          <i class="bi bi-google"></i> Sign in with Google
+        </button>
+        <div id="googleSignedInInfo" class="d-none small text-body-secondary mt-1">
+          <i class="bi bi-check-circle-fill text-success"></i> Connected
+        </div>
+      </div>
+      
+      <div class="dropdown">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 d-flex align-items-center gap-2 text-truncate" type="button" data-bs-toggle="dropdown">
+          <i class="bi bi-building"></i> <span id="activeBizLabel">Personal</span>
+        </button>
+        <ul class="dropdown-menu w-100" id="bizSwitchMenu"></ul>
+      </div>
+      <div class="d-flex gap-2">
+        <button id="themeToggle" class="btn btn-outline-secondary btn-sm flex-grow-1 d-flex align-items-center justify-content-center gap-1" type="button">
+          <i class="bi bi-moon-stars" id="themeIcon"></i> <span id="themeLabel">Dark</span>
+        </button>
+        <button id="voiceAutoToggle" class="btn btn-outline-secondary btn-sm" type="button" title="Auto Read-Aloud (TTS)">
+          <i class="bi bi-volume-up"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main Work Area -->
+  <div class="d-flex flex-column flex-grow-1 min-w-0">
+
+    <!-- Mobile Top Navigation Header -->
+    <div class="d-flex d-lg-none align-items-center gap-2 p-2 border-bottom bg-body">
+      <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="offcanvas" data-bs-target="#sidebar">
+        <i class="bi bi-list"></i>
+      </button>
+      <strong class="d-flex align-items-center gap-2 text-truncate">
+        <i class="bi bi-cpu-fill text-primary"></i> <span id="mobileBrandName">AI Workspace</span>
+      </strong>
+    </div>
+
+    <div class="tab-content flex-grow-1 d-flex flex-column min-h-0">
+
+      <!-- Tab 1: Chat -->
+      <div class="tab-pane fade show active flex-grow-1 d-flex flex-column overflow-hidden" id="pane-chat" role="tabpanel">
+        
+        <!-- Header -->
+        <div class="d-flex align-items-center gap-2 p-3 border-bottom bg-body flex-shrink-0">
+          <span class="rounded-circle text-white d-inline-flex align-items-center justify-content-center fs-5 flex-shrink-0" id="current-avatar-wrap">
+            <span id="current-avatar">🤖</span>
+          </span>
+          <div class="min-w-0">
+            <div class="d-flex align-items-center gap-2">
+              <strong id="current-name" class="text-truncate">Aria</strong>
+              <span class="badge bg-secondary-subtle text-secondary-emphasis" id="activeBizBadge">Personal</span>
+            </div>
+            <small class="text-body-secondary text-truncate d-block" id="current-persona">Executive assistant</small>
+          </div>
+
+          <div class="ms-auto d-flex align-items-center gap-2">
+            <div class="dropdown">
+              <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button" data-bs-toggle="dropdown" title="Change Character">
+                <i class="bi bi-person-fill-gear"></i>
+              </button>
+              <ul class="dropdown-menu dropdown-menu-end" id="charSwitchMenu"></ul>
+            </div>
+            <button class="btn btn-sm btn-outline-secondary" id="clearChatBtn" type="button" title="Clear Conversation"><i class="bi bi-eraser"></i></button>
+          </div>
+        </div>
+
+        <!-- Messages Container -->
+        <div class="flex-grow-1 overflow-auto p-3" id="chatMessages"></div>
+
+        <!-- Dynamic Quick Prompts Bar -->
+        <div class="px-3 py-2 bg-body-tertiary border-top d-flex gap-2 overflow-x-auto flex-shrink-0" id="quickPromptsContainer"></div>
+
+        <!-- Input Bar -->
+        <div class="border-top p-2 p-md-3 bg-body flex-shrink-0">
+          <div class="input-group">
+            <input type="text" class="form-control" id="chatInput" placeholder="Type a request, log an expense, add a task, or query your data..." autocomplete="off" />
+            <button class="btn btn-outline-secondary" id="micBtn" type="button" title="Speech to Text"><i class="bi bi-mic"></i></button>
+            <button class="btn btn-primary px-3" id="sendBtn" type="button"><i class="bi bi-send-fill"></i> Send</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 2: Data Explorer -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-explorer" role="tabpanel">
+        <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
+          <div>
+            <h4 class="mb-0">Data Explorer</h4>
+            <small class="text-body-secondary">IndexedDB vector stores with mathematical similarity indexing.</small>
+          </div>
+          <div class="d-flex align-items-center gap-2">
+            <select class="form-select form-select-sm" id="explorerSchemaSelect"></select>
+            <button class="btn btn-outline-primary btn-sm d-flex align-items-center gap-1" id="newSchemaBtn">
+              <i class="bi bi-folder-plus"></i> New Schema
+            </button>
+            <button class="btn btn-primary btn-sm d-flex align-items-center gap-1" id="addRecordBtn">
+              <i class="bi bi-plus-circle"></i> Add Record
+            </button>
+          </div>
+        </div>
+
+        <div class="card shadow-sm border">
+          <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between py-2">
+            <input type="text" class="form-control form-control-sm w-50" id="tableFilterInput" placeholder="Filter current records..." />
+            <span class="badge bg-primary-subtle text-primary-emphasis" id="tableRecordCount">0 records</span>
+          </div>
+          <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+              <thead class="table-light sticky-top">
+                <tr id="explorerTableHead"></tr>
+              </thead>
+              <tbody id="explorerTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 3: Characters -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-characters" role="tabpanel">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div>
+            <h4 class="mb-0">Characters & Personas</h4>
+            <small class="text-body-secondary">Configurable emotional expressions, avatars, voices, and system prompts.</small>
+          </div>
+          <button class="btn btn-primary btn-sm d-flex align-items-center gap-1" id="newCharacterBtn"><i class="bi bi-plus-lg"></i> New Character</button>
+        </div>
+        <div class="list-group" id="characterList"></div>
+      </div>
+
+      <!-- Tab 4: Businesses -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-businesses" role="tabpanel">
+        <div class="d-flex align-items-center justify-content-between mb-3">
+          <div>
+            <h4 class="mb-0">Businesses & Isolations</h4>
+            <small class="text-body-secondary">Multi-tenant schema boundaries and vector indices.</small>
+          </div>
+          <button class="btn btn-primary btn-sm d-flex align-items-center gap-1" id="newBusinessBtn"><i class="bi bi-plus-lg"></i> New Business</button>
+        </div>
+        <div class="list-group" id="businessList"></div>
+      </div>
+
+      <!-- Tab 5: Tools -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-tools" role="tabpanel">
+        <h4 class="mb-1">Active Tool Definitions</h4>
+        <small class="text-body-secondary d-block mb-3">Tools automatically matched to natural queries via hybrid heuristics and zero-shot ML.</small>
+        <div class="list-group" id="toolsList"></div>
+      </div>
+
+      <!-- Tab 6: Models -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-models" role="tabpanel">
+        <h4 class="mb-1">Model Configuration</h4>
+        <small class="text-body-secondary d-block mb-3">Select the on‑device models used for embeddings, classification, and text generation.</small>
+
+        <!-- Model Selection Controls -->
+        <div class="row g-3 mb-4">
+          <div class="col-md-6 col-lg-3">
+            <label class="form-label small fw-semibold" for="embedderModelSelect">Embedder Model</label>
+            <select class="form-select" id="embedderModelSelect"></select>
+          </div>
+          <div class="col-md-6 col-lg-3">
+            <label class="form-label small fw-semibold" for="classifierModelSelect">Classifier Model</label>
+            <select class="form-select" id="classifierModelSelect"></select>
+          </div>
+          <div class="col-md-6 col-lg-3">
+            <label class="form-label small fw-semibold" for="generatorModelSelect">Generator Model</label>
+            <select class="form-select" id="generatorModelSelect"></select>
+          </div>
+          <div class="col-md-6 col-lg-3">
+            <label class="form-label small fw-semibold" for="dtypeSelect">Data Type (Quantization)</label>
+            <select class="form-select" id="dtypeSelect">
+              <option value="q8">q8</option>
+              <option value="fp32">fp32</option>
+              <option value="fp16">fp16</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Model Status Panel -->
+        <div class="card border">
+          <div class="card-header bg-body-tertiary py-1 px-2">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-gpu-card"></i> Model Loading Status</small>
+          </div>
+          <div class="card-body p-2" id="modelStatusPanel">
+            <div class="text-body-secondary small">No models loaded yet.</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 7: Config -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-config" role="tabpanel">
+        <h4 class="mb-1">System Configuration</h4>
+        <small class="text-body-secondary d-block mb-3">Everything in the app is derived from this JSON. Edit directly or import/export.</small>
+
+        <textarea id="configEditor" class="form-control font-monospace small mb-3" rows="16" spellcheck="false"></textarea>
+
+        <div class="d-flex flex-wrap gap-2 mb-4">
+          <button class="btn btn-primary d-flex align-items-center gap-1" id="saveConfigBtn"><i class="bi bi-check2"></i> Save Changes</button>
+          <button class="btn btn-outline-secondary d-flex align-items-center gap-1" id="exportConfigBtn"><i class="bi bi-download"></i> Export JSON</button>
+          <button class="btn btn-outline-secondary d-flex align-items-center gap-1" id="importConfigBtn"><i class="bi bi-upload"></i> Import JSON</button>
+          <button class="btn btn-outline-danger d-flex align-items-center gap-1 ms-lg-auto" id="resetConfigBtn"><i class="bi bi-arrow-counterclockwise"></i> Reset to Defaults</button>
+          <input type="file" id="importConfigInput" accept=".json,application/json" class="d-none" />
+        </div>
+
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary d-flex align-items-center justify-content-between py-2">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-clock-history"></i> Configuration History</small>
+            <button class="btn btn-sm btn-link text-decoration-none py-0 px-1" type="button" data-bs-toggle="collapse" data-bs-target="#historyCollapse">
+              <i class="bi bi-chevron-down"></i>
+            </button>
+          </div>
+          <div class="collapse" id="historyCollapse">
+            <div class="card-body p-2">
+              <div id="configHistoryList" class="d-flex flex-column gap-2"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Dynamic Record Add -->
+<div class="modal fade" id="recordModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="recordModalTitle">Add Record</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body d-flex flex-column gap-3" id="recordModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveRecordBtn">Save Record</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Toast Feedback Container -->
+<div class="toast-container position-fixed bottom-0 end-0 p-3" id="toastContainer"></div>
+
+<!-- Modal: New Character -->
+<div class="modal fade" id="characterModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Create New Character</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body d-flex flex-column gap-3">
+        <div>
+          <label class="form-label small fw-semibold" for="charNameInput">Character Name</label>
+          <input type="text" class="form-control" id="charNameInput" placeholder="e.g., Nova" required />
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="charIdInput">Identifier (ID)</label>
+          <input type="text" class="form-control" id="charIdInput" placeholder="e.g., nova (optional, auto-generated)" />
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="charPersonaInput">Persona / Role</label>
+          <input type="text" class="form-control" id="charPersonaInput" placeholder="e.g., Senior Systems Architect" />
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="charPromptInput">System Instructions / Prompt</label>
+          <textarea class="form-control" id="charPromptInput" rows="3" placeholder="You are Nova, an expert architect..."></textarea>
+        </div>
+        <div class="row g-2">
+          <div class="col-6">
+            <label class="form-label small fw-semibold" for="charColorInput">Theme Color</label>
+            <input type="color" class="form-control form-control-color w-100" id="charColorInput" value="#6366f1" />
+          </div>
+          <div class="col-6">
+            <label class="form-label small fw-semibold" for="charAvatarInput">Avatar Emoji</label>
+            <input type="text" class="form-control" id="charAvatarInput" value="🤖" />
+          </div>
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="charSpecInput">Specializations (comma-separated)</label>
+          <input type="text" class="form-control" id="charSpecInput" placeholder="e.g., code, architecture, testing" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveCharacterBtn">Save Character</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: New Business / Workspace -->
+<div class="modal fade" id="businessModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Create New Workspace</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body d-flex flex-column gap-3">
+        <div>
+          <label class="form-label small fw-semibold" for="bizNameInput">Workspace Name</label>
+          <input type="text" class="form-control" id="bizNameInput" placeholder="e.g., Marketing Dept" required />
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="bizIdInput">Identifier (ID)</label>
+          <input type="text" class="form-control" id="bizIdInput" placeholder="e.g., marketing (optional, auto-generated)" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveBusinessBtn">Save Workspace</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: New Schema -->
+<div class="modal fade" id="schemaModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title">Create New Data Schema</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body d-flex flex-column gap-3">
+        <div>
+          <label class="form-label small fw-semibold" for="schemaNameInput">Schema Name (lowercase table)</label>
+          <input type="text" class="form-control" id="schemaNameInput" placeholder="e.g., invoices" required />
+        </div>
+        <div>
+          <label class="form-label small fw-semibold" for="schemaFieldsInput">Fields Definition (comma-separated field:type or JSON)</label>
+          <input type="text" class="form-control" id="schemaFieldsInput" placeholder="e.g., title:string, amount:number, category:string" />
+          <div class="form-text">Available types: string, number, boolean, date, object</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-primary" id="saveSchemaBtn">Save Schema</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: Tool Permission Confirmation -->
+<div class="modal fade" id="permissionModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title"><i class="bi bi-shield-lock-fill text-warning me-2"></i>Permission Request</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <p>A tool requires your authorization to execute:</p>
+        <div class="border rounded p-3 bg-body-tertiary">
+          <div class="mb-2"><strong>Tool:</strong> <code id="permToolName"></code></div>
+          <div><strong>Permission Level:</strong> <span class="badge bg-warning text-dark" id="permLevelName"></span></div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline-secondary" id="denyPermissionBtn">Deny</button>
+        <button class="btn btn-primary" id="approvePermissionBtn">Allow & Execute</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Main Application Script (Pure isolated JS) -->
+<script type="module" src="app.js"></script>
+</body>
+</html>
