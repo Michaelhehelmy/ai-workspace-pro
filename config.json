@@ -187,6 +187,17 @@
     "embedder": "Xenova/all-MiniLM-L6-v2",
     "classifier": "Xenova/mobilebert-uncased-mnli",
     "generator": "Xenova/LaMini-Flan-T5-77M",
+    "pipeline": {
+      "policy": "swap",
+      "threshold": 0.35,
+      "memory": { "maxSimultaneous": 1, "wasmInitialMb": 64 },
+      "stages": [
+        { "key": "encoder", "task": "feature-extraction", "role": "embedder", "model": "Xenova/all-MiniLM-L6-v2" },
+        { "key": "intent", "task": "zero-shot-classification", "role": "classifier", "model": "Xenova/mobilebert-uncased-mnli" },
+        { "key": "tagger", "task": "token-classification", "role": "ner", "model": "Xenova/bert-base-NER" },
+        { "key": "dialog", "task": "text2text-generation", "role": "generator", "model": "Xenova/LaMini-Flan-T5-248M" }
+      ]
+    },
     "availableModels": [
       {
         "id": "Xenova/LaMini-Flan-T5-77M",
@@ -229,6 +240,12 @@
         "name": "MobileBERT Uncased MNLI",
         "type": "classifier",
         "description": "Zero-shot text classification model"
+      },
+      {
+        "id": "Xenova/bert-base-NER",
+        "name": "BERT Base NER",
+        "type": "ner",
+        "description": "Named entity recognition for entity/parameter extraction"
       }
     ]
   }
