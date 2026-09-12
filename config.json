@@ -24,12 +24,28 @@
       }
     },
     "google": {
-      "clientId": "YOUR_GOOGLE_CLIENT_ID_HERE",
+      "clientId": "",
       "scopes": [
         "https://www.googleapis.com/auth/calendar.readonly",
         "https://www.googleapis.com/auth/drive.readonly",
         "https://www.googleapis.com/auth/spreadsheets.readonly"
       ]
+    },
+    "ai": {
+      "backends": {
+        "llamacpp": {
+          "url": "http://localhost:8080/v1",
+          "enabled": false
+        },
+        "ollama": {
+          "url": "http://localhost:11434",
+          "enabled": false
+        }
+      },
+      "routing": {
+        "dialog": "auto",
+        "embedder": "auto"
+      }
     }
   },
   "quickPrompts": [
@@ -184,6 +200,7 @@
   ],
   "modelSettings": {
     "dtype": "q8",
+    "preloadOnOpen": false,
     "embedder": "Xenova/all-MiniLM-L6-v2",
     "classifier": "Xenova/mobilebert-uncased-mnli",
     "generator": "Xenova/LaMini-Flan-T5-77M",
@@ -200,52 +217,116 @@
     },
     "availableModels": [
       {
-        "id": "Xenova/LaMini-Flan-T5-77M",
-        "name": "LaMini-Flan-T5-77M",
-        "type": "generator",
-        "description": "Small, fast instruction-following model (77M params)"
+        "id": "Xenova/all-MiniLM-L6-v2",
+        "name": "MiniLM-L6-v2",
+        "type": "embedder",
+        "description": "Fast, compact semantic embeddings (384-dim)",
+        "sizeMb": 22
       },
       {
-        "id": "Xenova/LaMini-Flan-T5-248M",
-        "name": "LaMini-Flan-T5-248M",
-        "type": "generator",
-        "description": "Better instruction-following (248M params)"
-      },
-      {
-        "id": "Xenova/LaMini-Flan-T5-783M",
-        "name": "LaMini-Flan-T5-783M",
-        "type": "generator",
-        "description": "High-quality instruction-following (783M params)"
-      },
-      {
-        "id": "Xenova/flan-t5-large",
-        "name": "Flan-T5-Large",
-        "type": "generator",
-        "description": "Google's instruction-tuned model (780M params)"
+        "id": "Xenova/all-MiniLM-L12-v2",
+        "name": "MiniLM-L12-v2",
+        "type": "embedder",
+        "description": "Better quality L12 embeddings, slightly larger",
+        "sizeMb": 32
       },
       {
         "id": "Xenova/bge-small-en-v1.5",
         "name": "BGE-Small-EN-v1.5",
         "type": "embedder",
-        "description": "Better embeddings for semantic search"
+        "description": "High-retrieval English embeddings (384-dim)",
+        "sizeMb": 30
       },
       {
         "id": "Xenova/bge-base-en-v1.5",
         "name": "BGE-Base-EN-v1.5",
         "type": "embedder",
-        "description": "High-quality embeddings (larger)"
+        "description": "High-quality English embeddings (768-dim)",
+        "sizeMb": 90
+      },
+      {
+        "id": "Xenova/gte-small",
+        "name": "GTE-Small",
+        "type": "embedder",
+        "description": "General-text embeddings, strong on short text",
+        "sizeMb": 32
+      },
+      {
+        "id": "Xenova/multilingual-e5-small",
+        "name": "Multilingual-E5-Small",
+        "type": "embedder",
+        "description": "Multilingual semantic embeddings (100+ languages)",
+        "sizeMb": 113
       },
       {
         "id": "Xenova/mobilebert-uncased-mnli",
         "name": "MobileBERT Uncased MNLI",
         "type": "classifier",
-        "description": "Zero-shot text classification model"
+        "description": "Compact zero-shot text classification",
+        "sizeMb": 26
+      },
+      {
+        "id": "Xenova/distilbert-base-uncased-mnli",
+        "name": "DistilBERT Uncased MNLI",
+        "type": "classifier",
+        "description": "Distilled zero-shot classifier, higher accuracy",
+        "sizeMb": 64
+      },
+      {
+        "id": "Xenova/bart-large-mnli",
+        "name": "BART-Large MNLI",
+        "type": "classifier",
+        "description": "Highest-accuracy zero-shot classifier (slow)",
+        "sizeMb": 392
       },
       {
         "id": "Xenova/bert-base-NER",
         "name": "BERT Base NER",
         "type": "ner",
-        "description": "Named entity recognition for entity/parameter extraction"
+        "description": "Named entity recognition for entity/parameter extraction",
+        "sizeMb": 104
+      },
+      {
+        "id": "Xenova/LaMini-Flan-T5-77M",
+        "name": "LaMini-Flan-T5-77M",
+        "type": "generator",
+        "description": "Fastest instruction-following model (77M params)",
+        "sizeMb": 60
+      },
+      {
+        "id": "Xenova/LaMini-Flan-T5-248M",
+        "name": "LaMini-Flan-T5-248M",
+        "type": "generator",
+        "description": "Balanced instruction-following (248M params)",
+        "sizeMb": 262
+      },
+      {
+        "id": "Xenova/LaMini-Flan-T5-783M",
+        "name": "LaMini-Flan-T5-783M",
+        "type": "generator",
+        "description": "High-quality instruction-following (783M params)",
+        "sizeMb": 620
+      },
+      {
+        "id": "Xenova/flan-t5-small",
+        "name": "Flan-T5-Small",
+        "type": "generator",
+        "description": "Google's instruction-tuned model (80M params)",
+        "sizeMb": 90
+      },
+      {
+        "id": "Xenova/flan-t5-base",
+        "name": "Flan-T5-Base",
+        "type": "generator",
+        "description": "Google's instruction-tuned model (250M params)",
+        "sizeMb": 262
+      },
+      {
+        "id": "Xenova/flan-t5-large",
+        "name": "Flan-T5-Large",
+        "type": "generator",
+        "description": "Google's instruction-tuned model (780M params)",
+        "sizeMb": 410
       }
     ]
   }

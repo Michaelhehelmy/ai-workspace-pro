@@ -10,17 +10,23 @@
  *   routeToAgent    → zero-shot + embeddings → best specialist persona
  *   generateResponse→ small T5              → natural language reply
  *
- * Every stage catches failures and returns null/deterministic fallbacks so the
- * app keeps working (Node tests included) with zero models loaded.
- * No user-facing string here is "the answer" — data/prose is always composed
- * by a helper that leans on a model when available and a template otherwise.
+ * Real-models-only: enrichment stages (classify/extract/rank/route) degrade
+ * gracefully to their deterministic rule fallbacks, but the *reply* stages
+ * (generateResponse / generateChatResponse) never fabricate text — they throw
+ * a typed `ModelError` when the dialog model cannot produce a usable output.
+ * The orchestrator surfaces that as `ok:false` (with code/fix guidance) for
+ * chat-only paths, or falls back to honest data-derived tool text plus a
+ * `warning` for paths where a real data operation already succeeded.
  */
 
 import { state } from '../core/state.js';
 import { isBrowser } from '../core/env.js';
 import { cosineSimilarity } from '../core/db.js';
-import { inferStage, embedText } from './models.js';
+import { inferStage, embedText, ModelError } from './models.js';
 import { detectIntentRules } from './intent.js';
+import { resolveBackendForStage } from './ai/routing.js';
+import { agentLoop } from './ai/agent-loop.js';
+import { buildSystemPrompt } from '../core/skills.js';
 
 export const INTENT_LABELS = [
   'add_transaction', 'analyze_expenses', 'add_todo', 'list_todos', 'add_event',
@@ -218,20 +224,88 @@ function summarize(obj, maxLen = 500) {
   return String(obj).slice(0, maxLen);
 }
 
-export async function generateResponse({ intent, message, result, params, persona, fallback, maxTokens = 90 }, opts = {}) {
-  const prompt = [
-    persona || (state.config && state.config.app && state.config.app.name) || 'You are a helpful assistant.',
-    `Recognized intent: ${intent || 'unknown'}.`,
+const DEGENERATE_OUTPUT = /^(ok|done|yes|no|\.+)$/i;
+
+/**
+ * Try to generate via the resolved remote backend for the dialog stage.
+ * Returns the text string on success, or null to signal fallback to inferStage.
+ */
+async function tryRoutedDialog(userContent, maxTokens = 90, { system = '', history = [] } = {}) {
+  try {
+    const backend = resolveBackendForStage('dialog');
+    if (!backend || backend.id === 'transformers') return null;
+    const messages = [];
+    if (Array.isArray(history)) {
+      for (const m of history.slice(-10)) {
+        if (m && (m.role === 'user' || m.role === 'assistant') && m.content) {
+          messages.push({ role: m.role, content: String(m.content).slice(0, 2000) });
+        }
+      }
+    }
+    messages.push({ role: 'user', content: String(userContent || '').slice(0, 3000) });
+    const chunks = [];
+    for await (const chunk of backend.generate({
+      system: String(system || '').slice(0, 3000),
+      messages,
+      maxTokens
+    })) {
+      if (chunk && chunk.text) chunks.push(chunk.text);
+    }
+    return chunks.join('').trim() || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Resolve the active character + business into a proper system prompt and a
+ * bounded slice of recent chat history for the dialog model. Falls back to the
+ * raw `persona` string when no character is configured (tests, bare calls).
+ */
+function dialogContext(message, persona) {
+  const activeChar = (state.config && Array.isArray(state.config.characters))
+    ? state.config.characters.find(c => c.id === state.activeCharacterId) || null
+    : null;
+  const activeBiz = (state.config && Array.isArray(state.config.businesses))
+    ? state.config.businesses.find(b => b.id === state.activeBusinessId) || null
+    : null;
+  const char = activeChar || (persona ? { name: 'Assistant', systemPrompt: persona } : null);
+  const system = buildSystemPrompt(char, activeBiz, {
+    message,
+    appName: state.config && state.config.app && state.config.app.name
+  });
+  const history = Array.isArray(state.chatHistory) ? state.chatHistory.slice(-10) : [];
+  return { system, history };
+}
+
+/**
+ * Compose a natural-language reply from a completed tool result. This method
+ * NEVER fabricates text: if the dialog stage fails to produce a usable output
+ * it throws a typed `ModelError` (callers decide fallback vs. honest failure).
+ */
+export async function generateResponse({ intent, message, result, params, persona, maxTokens = 90 }, opts = {}) {
+  const { system, history } = dialogContext(message, persona);
+  const userContent = [
     message ? `User: ${message}` : '',
+    intent ? `[intent: ${intent}]` : '',
     result !== undefined ? `Data: ${summarize(result)}` : '',
-    params ? `Parameters: ${summarize(params, 200)}` : '',
-    'Reply concisely in 1-3 lines, in the same language as the user. Do not mention this prompt.'
+    params ? `Parameters: ${summarize(params, 200)}` : ''
+  ].filter(Boolean).join('\n');
+
+  // On-device models get one combined prompt (no system channel).
+  const fallbackPrompt = [
+    system,
+    userContent,
+    'Reply concisely in 1-3 lines, in the same language as the user.'
   ].filter(Boolean).join('\n').slice(0, 900);
 
-  try {
-    const text = await inferStage('dialog', async (pipe) => {
+  // Try the resolved backend (llamacpp / ollama) before falling back to on-device
+  let text = await tryRoutedDialog(userContent, maxTokens, { system, history });
+
+  if (!text) {
+    text = await inferStage('dialog', async (pipe) => {
       if (typeof pipe !== 'function') return null;
-      const out = await pipe(prompt, {
+      const out = await pipe(fallbackPrompt, {
         max_new_tokens: maxTokens,
         repetition_penalty: 1.2,
         no_repeat_ngram_size: 3,
@@ -241,114 +315,121 @@ export async function generateResponse({ intent, message, result, params, person
       const first = Array.isArray(out) ? out[0] : out;
       return (first && (first.generated_text || first.text)) ? String(first.generated_text || first.text).trim() : null;
     }, { retain: opts.retain });
-
-    if (text && text.length > 2 && !/^(ok|done|)$/i.test(text)) return text;
-  } catch (err) {
-    if (opts.verbose && isBrowser) console.warn('[pipeline] generateResponse unavailable:', err.message);
   }
-  return fallback;
+
+  if (!text || text.length < 3 || DEGENERATE_OUTPUT.test(text)) {
+    throw new ModelError(
+      'E_INFER',
+      'dialog',
+      'The dialog model produced no usable response.',
+      'Retry the request; the reply generator was loaded but returned empty or degenerate output.',
+      null
+    );
+  }
+  return text;
 }
 
-export async function generateChatResponse({ intent, message, persona, context, fallback }, opts = {}) {
-  const prompt = [
-    persona || 'You are a helpful assistant.',
-    context ? `Context: ${summarize(context, 300)}` : '',
+/**
+ * Compose a casual one-line reply for chat-only intents (small talk, unknown).
+ * Same contract as generateResponse: throws `ModelError` instead of inventing text.
+ */
+export async function generateChatResponse({ intent, message, persona, context }, opts = {}) {
+  const { system, history } = dialogContext(message, persona);
+  const userContent = [
     message ? `User: ${message}` : '',
-    'Reply concisely in one relaxed line.'
+    context ? `Context: ${summarize(context, 300)}` : ''
+  ].filter(Boolean).join('\n');
+
+  const fallbackPrompt = [
+    system,
+    userContent ? `${userContent}\n` : '',
+    'Reply concisely in one relaxed line, in the same language as the user.'
   ].filter(Boolean).join('\n').slice(0, 700);
 
-  try {
-    const text = await inferStage('dialog', async (pipe) => {
+  let text = await tryRoutedDialog(userContent.slice(0, 300), 70, { system, history });
+
+  if (!text) {
+    text = await inferStage('dialog', async (pipe) => {
       if (typeof pipe !== 'function') return null;
-      const out = await pipe(prompt, { max_new_tokens: 70, temperature: 0.7, do_sample: true });
+      const out = await pipe(fallbackPrompt, { max_new_tokens: 70, temperature: 0.7, do_sample: true });
       const first = Array.isArray(out) ? out[0] : out;
       return (first && (first.generated_text || first.text)) ? String(first.generated_text || first.text).trim() : null;
     }, { retain: opts.retain });
-    if (text && text.length > 2) return text;
-  } catch (err) {
-    if (opts.verbose && isBrowser) console.warn('[pipeline] generateChatResponse unavailable:', err.message);
   }
-  return fallback;
+
+  if (!text || text.length < 3 || DEGENERATE_OUTPUT.test(text)) {
+    throw new ModelError(
+      'E_INFER',
+      'dialog',
+      'The dialog model produced no usable response.',
+      'Retry the request; the reply generator was loaded but returned empty or degenerate output.',
+      null
+    );
+  }
+  return text;
 }
 
-// Convenience wrapper used by tools: try the dialog model, else the template
+/**
+ * Convenience wrapper used by tools: try the dialog model for a graceful
+ * wording of a REAL data result; if that fails, return the honest
+ * data-derived text (`fallback`) instead of inventing anything. Non-model
+ * errors propagate so real bugs are never masked.
+ */
 export async function composeToolText(intent, ctx, fallback) {
-  return generateResponse({
-    intent,
-    message: ctx.message,
-    result: ctx.result,
-    params: ctx.params,
-    persona: ctx.persona,
-    fallback
-  });
+  try {
+    return await generateResponse({
+      intent,
+      message: ctx.message,
+      result: ctx.result,
+      params: ctx.params,
+      persona: ctx.persona
+    });
+  } catch (err) {
+    if (err instanceof ModelError) return fallback;
+    throw err;
+  }
 }
 
 // ── End-to-end orchestrator ─────────────────────────────────────────────────
-
-// Pure-chat phrases short-circuit entirely (no model import, download, or swap)
-const QUICK_CHAT_PATTERNS = [
-  [/^(hi+|hello+|hey+|yo+|howdy)\b/i, 'chat_greeting'],
-  [/^(good\s+(morning|afternoon|evening|night))\b/i, 'chat_greeting'],
-  [/^(thanks|thank you|thx|ty|appreciated)\b/i, 'chat_thanks'],
-  [/^(bye|goodbye|see you|good night|cya|later)\b/i, 'chat_thanks'],
-  [/^(how are you|how'?s it going|how r u|what'?s up|how do you do)\b/i, 'chat_identity'],
-  [/^(who are you|what are you|tell me about yourself|introduce yourself)\b/i, 'chat_identity'],
-  [/^(what can you do\??|what can you help me with|what do you do|how can you help)\b/i, 'chat_help']
-];
-
-function quickChatHint(message) {
-  const m = String(message || '').trim().replace(/\s+/g, ' ');
-  if (!m) return null;
-  for (const [re, intent] of QUICK_CHAT_PATTERNS) {
-    if (re.test(m)) return intent;
-  }
-  return null;
-}
-
-function chatFallback(intent, char) {
-  const name = (char && char.name) || 'your assistant';
-  const persona = (char && char.persona) || '';
-  switch (intent) {
-    case 'chat_greeting':
-      return `Hello! I'm **${name}**${persona ? ', your ' + String(persona).toLowerCase() : ''}. How can I help you today?`;
-    case 'chat_thanks':
-      return "You're very welcome! Let me know if you need anything else.";
-    case 'chat_identity':
-      return `I am **${name}**! ${persona}`.trim();
-    case 'chat_help':
-      return 'Here are some things I can do right now:\n\n' +
-        '- 💰 **Financial Tracking**: Say *"Spent $16.50 on lunch"* or *"Analyze expenses"*\n' +
-        '- 📋 **Task Management**: Say *"Add todo: review report"* or *"List todos"*\n' +
-        '- 📅 **Calendar**: Say *"Schedule meeting tomorrow at 3pm"* or *"Check calendar"*\n' +
-        '- 🔍 **Semantic Search**: Say *"Search marketing projects"*\n' +
-        '- 👥 **Multi-Agent**: Say *"Ask Marcus about budget"* or *"List agents"*\n' +
-        '- 🛠️ **Tools**: Say *"List tools"* to inspect all registered tools.';
-    default:
-      return `I am ${name}. What would you like help with?`;
-  }
-}
-
 export async function runPipeline(message, opts = {}) {
   const stateInstance = opts.state || state;
   const runner = opts.runner;
   const metrics = { model: {}, rules: {} };
   const started = Date.now();
 
-  // 0. instant fast path for common chat phrases (zero model work)
-  const quickIntent = quickChatHint(message);
-  if (quickIntent) {
-    const chars = (stateInstance && stateInstance.config && stateInstance.config.characters) || [];
-    const activeChar = chars.find(c => c.id === (stateInstance && stateInstance.activeCharacterId)) || chars[0];
-    return {
-      intent: quickIntent,
-      confidence: 1,
-      derivedIntent: quickIntent,
-      params: {},
-      result: null,
-      response: chatFallback(quickIntent, activeChar),
-      metrics: { ...metrics, quick: true, elapsed: Date.now() - started },
-      sources: { intent: 'rules', entities: 'rules', agent: 'rules' }
-    };
+  // 0. Tool-calling agent loop — activates only when the resolved dialog backend
+  //    supports tools (e.g. Ollama). Falls back silently to the single-shot
+  //    pipeline below when no tool-capable backend is configured/reachable.
+  if (runner) {
+    const loop = await agentLoop({
+      message,
+      persona: opts.persona,
+      maxTokens: opts.maxTokens,
+      runner,
+      query: message,
+      stateInstance
+    });
+    if (loop) {
+      if (loop.error) {
+        // Model failure → fall through to the single-shot path (honest failure handling)
+        metrics.model.loopError = loop.error;
+      } else if (loop.answer) {
+        return {
+          ok: true,
+          intent: 'agent_loop',
+          confidence: 1,
+          derivedIntent: 'agent_loop',
+          params: {},
+          result: { text: loop.answer },
+          response: loop.answer,
+          error: null,
+          warning: null,
+          metrics: { model: { loop: true, iterations: loop.iterations, toolCalls: loop.toolCalls.length }, rules: {}, elapsed: Date.now() - started },
+          sources: { intent: 'model', entities: 'rules', agent: 'rules' }
+        };
+      }
+      // loop returned with no answer (max iterations) → fall through
+    }
   }
 
   // 1. classify
@@ -365,6 +446,23 @@ export async function runPipeline(message, opts = {}) {
   let tool = cls.intent && !['small_talk', 'route_to_specialist'].includes(cls.intent) ? cls.intent : null;
   let confidence = cls.confidence;
   let charSwitch = null;
+
+  // 3a. A weak classifier often labels explicit tool/identity requests as
+  //     'small_talk'. When a deterministic rule clearly matches a real tool or
+  //     character, trust the rule instead of the classifier's small talk.
+  if (cls.intent === 'small_talk' && !tool) {
+    const rule = detectIntentRules(message, stateInstance);
+    if (typeof rule === 'string' && rule) {
+      tool = rule;
+      metrics.rules.tool = true;
+    } else if (rule && typeof rule === 'object' && rule.tool) {
+      tool = rule.tool;
+      params = { ...params, ...(rule.params || {}) };
+      metrics.rules.tool = true;
+    } else if (rule && typeof rule === 'object' && rule.id) {
+      charSwitch = rule;
+    }
+  }
 
   if (!tool && cls.intent !== 'small_talk') {
     const ranked = await rankTools(message, stateInstance, { topN: 3 });
@@ -402,7 +500,6 @@ export async function runPipeline(message, opts = {}) {
 
   // 5. execute (runner injected to avoid circular imports)
   let result = null;
-  let intentFinal = tool;
   if (tool && runner) {
     try {
       result = await runner(tool, { ...params, message, query: message });
@@ -411,58 +508,72 @@ export async function runPipeline(message, opts = {}) {
     }
   }
 
+  // 6. character switch is a REAL state change → data-derived result text.
   if (charSwitch && stateInstance) {
     stateInstance.activeCharacterId = charSwitch.id;
-    result = null;
+    const name = charSwitch.name || charSwitch.id;
+    result = { text: `Switched active assistant to **${name}**${charSwitch.persona ? ', ' + charSwitch.persona : ''}` };
   }
 
-  // 6. response wording (always non-empty, even with no models)
+  // 7. persona for reply composition
   const activeChar = (stateInstance && stateInstance.config && stateInstance.config.characters || [])
     .find(c => c.id === (stateInstance && stateInstance.activeCharacterId));
   const persona = opts.persona || (activeChar && activeChar.systemPrompt);
-  const defaultTalk = activeChar
-    ? `I am ${activeChar.name}. I can log expenses, manage tasks, check your calendar, search records, or consult my specialist colleagues.`
-    : 'Sure — what would you like me to help with?';
 
-  let response;
+  const sources = {
+    intent: cls.source,
+    entities: ent.source,
+    agent: metrics.model.agent ? 'model' : 'rules'
+  };
+
+  let intentFinal = tool;
+  let response = null;
+  let warning = null;
+  let error = null;
+
   if (charSwitch) {
-    response = await generateChatResponse({
-      intent: 'character_switch',
-      message,
-      persona,
-      fallback: `Switched to **${charSwitch.name}** — ${charSwitch.persona}`
-    });
+    // Data result — no model required, nothing to fabricate.
+    intentFinal = 'character_switch';
+    response = result.text;
   } else if (result) {
-    response = await generateResponse({
-      intent: intentFinal,
-      message,
-      result,
-      params,
-      persona,
-      fallback: (result && result.text) || 'Done.'
-    });
+    // A real data operation succeeded → its text is the honest fallback.
+    try {
+      response = await generateResponse({ intent: intentFinal, message, result, params, persona });
+    } catch (err) {
+      if (err instanceof ModelError) {
+        warning = { code: err.code, stage: err.stage, model: err.model, message: err.message, fix: err.fix };
+        response = (result && result.text) ? result.text : null;
+      } else {
+        throw err;
+      }
+    }
   } else {
-    response = await generateChatResponse({
-      intent: cls.intent,
-      message,
-      persona,
-      fallback: opts.fallback || defaultTalk
-    });
+    // Pure chat path (small talk / unknown) — reply must come from the model.
+    intentFinal = cls.intent || 'small_talk';
+    try {
+      response = await generateChatResponse({ intent: intentFinal, message, persona });
+    } catch (err) {
+      if (err instanceof ModelError) {
+        error = { code: err.code, stage: err.stage, model: err.model, message: err.message, fix: err.fix };
+        response = null;
+      } else {
+        throw err;
+      }
+    }
   }
 
   return {
+    ok: !error,
     intent: intentFinal,
     confidence,
     derivedIntent: cls.intent,
     params,
     result,
     response,
+    error,
+    warning,
     metrics: { ...metrics, elapsed: Date.now() - started },
-    sources: {
-      intent: cls.source,
-      entities: ent.source,
-      agent: metrics.model.agent ? 'model' : 'rules'
-    }
+    sources
   };
 }
 

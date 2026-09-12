@@ -4,6 +4,7 @@
 
 import { isBrowser } from '../core/env.js';
 import { state } from '../core/state.js';
+import { isPlaceholder } from '../core/config.js';
 import { showToast } from './ui.js';
 
 export class GoogleAPI {
@@ -16,7 +17,12 @@ export class GoogleAPI {
   extractClientId() {
     const cfg = this.state.config;
     if (cfg && cfg.app && cfg.app.google && cfg.app.google.clientId) {
-      return cfg.app.google.clientId;
+      const id = cfg.app.google.clientId;
+      if (isPlaceholder(id)) {
+        console.warn('GoogleAPI: clientId looks like a placeholder — refusing to use it. Configure GOOGLE_CLIENT_ID (env) or a real app.google.clientId.');
+        return null;
+      }
+      return id;
     }
     return null;
   }
@@ -25,7 +31,7 @@ export class GoogleAPI {
     if (!isBrowser) return false;
     const clientId = this.extractClientId();
     if (!clientId) {
-      console.warn('GoogleAPI.init: no clientId configured');
+      console.warn('GoogleAPI.init: no real clientId configured. Provide a real Google OAuth client id via GOOGLE_CLIENT_ID (env) or app.google.clientId.');
       return false;
     }
     try {

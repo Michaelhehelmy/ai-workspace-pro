@@ -1,10 +1,10 @@
 /**
  * app/execute.js - Tool Execution Engine & Core Tool Registrations
  *
- * Tool results and conversational replies are composed by the multi-model
- * pipeline (composeToolText / generateChatResponse). Every user-facing string
- * still has its original template as the deterministic fallback, so the app
- * responds correctly even with zero models loaded (Node tests / offline).
+ * Data-producing tools return honest data-derived text composed by `composeToolText`
+ * (dialog model wording when available, the data text otherwise). Conversational
+ * paths (small talk / unknown) require real dialog-model output — when the model
+ * is unavailable they surface a typed `formatModelError` text, never canned prose.
  */
 
 import { isBrowser } from '../core/env.js';
@@ -12,10 +12,11 @@ import { state, getActiveCharacter, getActiveBusiness } from '../core/state.js';
 import { configAPI } from '../core/config.js';
 import { toolRegistry, ToolChain } from '../core/tools.js';
 import { cosineSimilarity } from '../core/db.js';
-import { getModel, computeEmbedding } from './models.js';
+import { computeEmbedding, embedText, formatModelError } from './models.js';
 import { detectIntent } from './intent.js';
 import { composeToolText, generateChatResponse, routeToAgent } from './pipeline.js';
 import { setCharacterEmotion } from './ui.js';
+import { extensionRegistry, applyBuiltinExtensions } from '../core/extensions.js';
 
 export async function executeTool(toolIdentifier, rawInput, stateInstance = state, registryInstance = toolRegistry) {
   let actualToolName = '';
@@ -41,20 +42,33 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
   // Natural language extraction for core tools
   if (actualToolName === 'add_transaction') {
     if (params.amount === undefined) {
-      const amtMatch = inputText.match(/(\d+(\.\d{1,2})?)/);
-      if (!amtMatch) {
+      const moneyNum = /\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?/;
+      const curMatch = (inputText.match(/[$€£]\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/) || [])[1];
+      const wordMatch = (inputText.match(/(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)\s*(?:dollars?|bucks|usd|eur|euros?)/i) || [])[1];
+      const kwMatch = (inputText.match(/\b(?:spent|spend|paid|cost|earned|received|income)\b\s*[$€£]?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)/i) || [])[1];
+      const amtRaw = curMatch || wordMatch || kwMatch;
+      if (!amtRaw) {
         return { text: "⚠️ Please specify an amount (e.g. 'Spent $16.50 on lunch at cafe')." };
       }
-      params.amount = parseFloat(amtMatch[1]);
+      const parsed = Number(amtRaw.replace(/,/g, ''));
+      if (Number.isNaN(parsed)) {
+        return { text: "⚠️ I couldn't read the amount — please restate it as a number (e.g. 'Spent $16.50 on lunch')." };
+      }
+      params.amount = parsed;
     }
     if (!params.type) {
       params.type = /\b(income|earned|salary|deposit|received)\b/i.test(inputText) ? 'income' : 'expense';
     }
     if (!params.description) {
-      params.description = inputText
-        .replace(/(\$|\bspent\b|\bpaid\b|\bfor\b|\bon\b|\bearned\b|\breceived\b)/gi, '')
-        .replace(String(params.amount), '')
-        .trim() || 'Transaction';
+      const desc = inputText
+        .replace(/[$€£]/g, ' ')
+        .replace(/\b(?:dollars?|bucks|usd|eur|euros?)\b/gi, ' ')
+        .replace(/\b(?:spent|spend|spending|paid|paying|for|on|earned|earning|received|receiving|income|cost|bought|purchased)\b/gi, ' ')
+        .replace(/[\d,]+(?:\.\d{1,2})?/g, ' ')
+        .replace(/\s+/g, ' ')
+        .replace(/^\s*(?:i|we)\s+/i, '')
+        .trim();
+      params.description = desc || 'Transaction';
     }
     if (!params.category) {
       let matchedCategory = 'general';
@@ -68,15 +82,40 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
     }
   } else if (actualToolName === 'add_todo') {
     if (!params.task) {
-      params.task = inputText.replace(/\b(add todo|remind me to|task:|new task|need to)\b/gi, '').trim();
+      params.task = inputText
+        .replace(/^\s*(?:add todo|new todo|create todo|add task|new task|create task|remind me to|set a? reminder|need to|todo|task)\s*:?\s*/i, '')
+        .trim();
     }
     if (!params.priority) {
       params.priority = /\b(urgent|critical)\b/i.test(inputText) ? 'high' :
                         /\b(low|minor)\b/i.test(inputText) ? 'low' : 'normal';
     }
+    if (!params.due_date) {
+      const inMatch = inputText.match(/\bin\s+(\d+)\s+days?\b/i);
+      if (inMatch) params.due_date = addDaysLocal(parseInt(inMatch[1], 10));
+      else if (/\btomorrow\b/i.test(inputText)) params.due_date = addDaysLocal(1);
+      else if (/\btoday\b/i.test(inputText)) params.due_date = todayLocal();
+    }
   } else if (actualToolName === 'add_event') {
     if (!params.summary) {
-      params.summary = inputText.replace(/\b(schedule|add event|calendar event|meeting with|appointment)\b/gi, '').trim() || 'Scheduled Event';
+      params.summary = inputText
+        .replace(/\b(schedule|scheduling|add event|calendar event|create|book|appointment|set(?: up)?)\b/gi, ' ')
+        .replace(/\b(today|tomorrow)\b/gi, ' ')
+        .replace(/at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.?m\.?|p\.?m\.?)?/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'Scheduled Event';
+    }
+    if (params.start === undefined || params.start === null || params.start === '') {
+      if (params.date) {
+        params.start = params.time ? `${String(params.date).trim()}T${String(params.time).trim()}` : String(params.date).trim();
+      } else if (/\btomorrow\b/i.test(inputText)) {
+        params.start = addDaysLocal(1);
+      } else {
+        params.start = todayLocal();
+      }
+    }
+    if (params.end === undefined || params.end === null || params.end === '') {
+      params.end = params.start;
     }
     if (!params.description) params.description = inputText;
   } else if (actualToolName === 'create_schema') {
@@ -91,8 +130,24 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
     }
   } else if (actualToolName === 'change_character_name') {
     if (!params.name) {
-      const match = inputText.match(/(?:to|call you|your name is)\s+([a-zA-Z0-9_-]+)/i);
-      if (match) params.name = match[1];
+      const match = inputText.match(/(?:to|call you|your name is)\s+([a-zA-Z0-9 _-]+?)[\s.!?,;]*$/i);
+      if (match) params.name = match[1].trim();
+    }
+  } else if (actualToolName === 'add_character') {
+    if (!params.character) {
+      const match = inputText.match(/(?:named|called|character(?: named| called| is)?)\s+([a-zA-Z0-9 _-]+?)[\s.!?,;]*$/i);
+      if (match) {
+        const name = match[1].trim();
+        if (name) params.character = { id: slugify(name) || name.toLowerCase(), name };
+      }
+    }
+  } else if (actualToolName === 'add_business') {
+    if (!params.business) {
+      const match = inputText.match(/(?:named|called|(?:business|workspace)(?: named| called| is)?)\s+([a-zA-Z0-9 _-]+?)[\s.!?,;]*$/i);
+      if (match) {
+        const name = match[1].trim();
+        if (name) params.business = { id: slugify(name) || name.toLowerCase(), name };
+      }
     }
   } else if (actualToolName === 'delegate_to_agent' || actualToolName === 'ask_agent') {
     if (!params.message && params.query) {
@@ -110,77 +165,24 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
     }
   }
 
-  // Conversational response handlers
-  if (actualToolName === 'chat_greeting') {
-    const char = getActiveCharacter(stateInstance);
-    if (isBrowser) setCharacterEmotion('happy');
-    return {
-      text: await generateChatResponse({
-        intent: 'chat_greeting',
-        message: inputText,
-        persona: char.systemPrompt,
-        fallback: `Hello! I'm **${char.name}**, your ${char.persona.toLowerCase()}. How can I help you today? You can ask me to log expenses, manage tasks, check your calendar, search records, or consult with other specialists.`
-      })
-    };
-  }
-  if (actualToolName === 'chat_identity') {
-    const char = getActiveCharacter(stateInstance);
-    if (isBrowser) setCharacterEmotion('happy');
-    const specs = (char.specialization || []).map(s => `\`${s}\``).join(', ');
-    return {
-      text: await generateChatResponse({
-        intent: 'chat_identity',
-        message: inputText,
-        persona: char.systemPrompt,
-        context: { name: char.name, persona: char.persona, specs },
-        fallback: `I am **${char.name}**! ${char.persona}\n\nMy primary specializations include: ${specs || 'general assistance'}. I can operate tools on-device and coordinate with other specialists when needed.`
-      })
-    };
-  }
-  if (actualToolName === 'chat_help') {
-    const char = getActiveCharacter(stateInstance);
-    if (isBrowser) setCharacterEmotion('neutral');
-    return {
-      text: await generateChatResponse({
-        intent: 'chat_help',
-        message: inputText,
-        persona: char.systemPrompt,
-        fallback: `Here are some things I can do for you right now:\n\n` +
-          `- 💰 **Financial Tracking**: Say *"Spent $16.50 on lunch"* or *"Analyze expenses"*\n` +
-          `- 📋 **Task Management**: Say *"Add todo: review report"* or *"List todos"*\n` +
-          `- 📅 **Calendar**: Say *"Schedule meeting tomorrow at 3pm"* or *"Check calendar"*\n` +
-          `- 🔍 **Semantic Search**: Say *"Search marketing projects"*\n` +
-          `- 👥 **Multi-Agent**: Say *"Ask Marcus about budget"* or *"List agents"*\n` +
-          `- 🛠️ **Tools**: Say *"List tools"* to inspect all registered tools.`
-      })
-    };
-  }
-  if (actualToolName === 'chat_thanks') {
-    const char = getActiveCharacter(stateInstance);
-    if (isBrowser) setCharacterEmotion('happy');
-    return {
-      text: await generateChatResponse({
-        intent: 'chat_thanks',
-        message: inputText,
-        persona: char.systemPrompt,
-        fallback: `You're very welcome! Let me know if you need anything else.`
-      })
-    };
-  }
+  // Conversational response handlers (real dialog-model output only)
   if (actualToolName === 'small_talk') {
     const char = getActiveCharacter(stateInstance);
     if (isBrowser) setCharacterEmotion('neutral');
-    return {
-      text: await generateChatResponse({
+    let text;
+    try {
+      text = await generateChatResponse({
         intent: 'small_talk',
         message: inputText,
-        persona: char.systemPrompt,
-        fallback: `I am ${char.name}. I focus on expense tracking, tasks, calendar and searches — but I'm happy to chat. What would you like help with?`
-      })
-    };
+        persona: char.systemPrompt
+      });
+    } catch (err) {
+      text = formatModelError(err);
+    }
+    return { text };
   }
 
-  // Unknown tool/message: compose a reply with the dialog stage, template fallback.
+  // Unknown tool/message: compose a reply with the dialog stage, or a typed error.
   if (isBrowser) setCharacterEmotion('thinking');
   const char = getActiveCharacter(stateInstance);
   const historyTurns = (stateInstance.chatHistory || [])
@@ -193,13 +195,17 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
     })
     .join('\n');
 
-  const reply = await generateChatResponse({
-    intent: 'unknown',
-    message: inputText,
-    persona: char.systemPrompt,
-    context: historyTurns || undefined,
-    fallback: `I understood your request, but the requested tool **"${actualToolName}"** is not active. Type "List tools" to see available tools.`
-  });
+  let reply;
+  try {
+    reply = await generateChatResponse({
+      intent: 'unknown',
+      message: inputText,
+      persona: char.systemPrompt,
+      context: historyTurns || undefined
+    });
+  } catch (err) {
+    reply = formatModelError(err);
+  }
   if (isBrowser) setCharacterEmotion('neutral');
   return { text: reply };
 }
@@ -227,7 +233,7 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         amount: Number(params.amount),
         category: params.category || 'general',
         description: params.description || 'Transaction',
-        date: params.date || new Date().toISOString().slice(0, 10)
+        date: params.date || todayLocal()
       };
       const emb = await computeEmbedding('transactions', rec, stateInstance);
       await dbInstance.addRecord(biz.id, 'transactions', rec, emb);
@@ -275,17 +281,18 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
       });
 
       const chartId = 'ch_' + Date.now();
+      const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
       return {
         text: await composeToolText('analyze_expenses', {
           message: '',
           params: {},
-          result: { workspace: biz.name, totalInc, totalExp, net: totalInc - totalExp, byCategory: catTotals }
+          result: { workspace: biz.name, totalInc, totalExp, net: totalInc - totalExp, byCategory: Object.fromEntries(sortedCats) }
         }, `### 📊 Financial Breakdown (${biz.name})\n- **Total Income:** $${totalInc.toFixed(2)}\n- **Total Expenses:** $${totalExp.toFixed(2)}\n- **Net Cashflow:** $${(totalInc - totalExp).toFixed(2)}`),
         chart: {
           id: chartId,
           type: 'doughnut',
-          labels: Object.keys(catTotals),
-          data: Object.values(catTotals)
+          labels: sortedCats.map(([c]) => c),
+          data: sortedCats.map(([, v]) => v)
         }
       };
     }
@@ -310,7 +317,7 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         task: params.task,
         status: 'pending',
         priority: params.priority || 'normal',
-        due_date: params.due_date || new Date().toISOString().slice(0, 10)
+        due_date: params.due_date || todayLocal()
       };
       const emb = await computeEmbedding('todos', rec, stateInstance);
       await dbInstance.addRecord(biz.id, 'todos', rec, emb);
@@ -341,11 +348,18 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
           }, "No todos found in this workspace.")
         };
       }
-      const list = todos.map(t => `- [${t.data.status === 'done' ? 'x' : ' '}] **${t.data.task}** *(${t.data.priority || 'normal'})*`).join('\n');
+      const pending = todos.filter(t => t.data.status !== 'done');
+      const done = todos.filter(t => t.data.status === 'done');
+      const line = t => `- [${t.data.status === 'done' ? 'x' : ' '}] **${t.data.task}** *(${t.data.priority || 'normal'})*`;
+      const sections = [`### 📋 Tasks (${biz.name}):`];
+      if (pending.length) sections.push(`**Pending:**\n${pending.map(line).join('\n')}`);
+      if (done.length) sections.push(`**Completed:**\n${done.map(line).join('\n')}`);
+      const text = sections.join('\n\n');
       return {
         text: await composeToolText('list_todos', {
-          message: '', params: {}, result: { workspace: biz.name, todos: todos.map(t => t.data) }
-        }, `### 📋 Active Tasks (${biz.name}):\n${list}`)
+          message: '', params: {},
+          result: { workspace: biz.name, pending: pending.map(t => t.data), completed: done.map(t => t.data) }
+        }, text)
       };
     }
   });
@@ -368,8 +382,8 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
       if (isBrowser) setCharacterEmotion('event');
       const rec = {
         summary: params.summary,
-        start: params.start || new Date().toISOString().slice(0, 10),
-        end: params.end || new Date().toISOString().slice(0, 10),
+        start: params.start || todayLocal(),
+        end: params.end || todayLocal(),
         description: params.description || ''
       };
       const emb = await computeEmbedding('calendar_events', rec, stateInstance);
@@ -398,13 +412,24 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         return {
           text: await composeToolText('check_calendar', {
             message: '', params: {}, result: { empty: true }
-          }, "Your workspace schedule is clear.")
+          }, "No events recorded yet — your schedule is clear.")
         };
       }
-      const schedule = `### 📅 Upcoming Schedule:\n` + events.map(e => `- **${e.data.summary}** (${e.data.start})`).join('\n');
+      const today = todayLocal();
+      const upcoming = events
+        .filter(e => !e.data.start || String(e.data.start).slice(0, 10) >= today)
+        .sort((a, b) => String(a.data.start || '').localeCompare(String(b.data.start || '')));
+      if (!upcoming.length) {
+        return {
+          text: await composeToolText('check_calendar', {
+            message: '', params: {}, result: { empty: true, workspace: biz.name }
+          }, "No events in the upcoming schedule — you are all clear.")
+        };
+      }
+      const schedule = `### 📅 Upcoming Schedule:\n` + upcoming.map(e => `- **${e.data.summary}** (${e.data.start})`).join('\n');
       return {
         text: await composeToolText('check_calendar', {
-          message: '', params: {}, result: { workspace: biz.name, events: events.map(e => e.data) }
+          message: '', params: {}, result: { workspace: biz.name, events: upcoming.map(e => e.data) }
         }, schedule)
       };
     }
@@ -463,14 +488,7 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         };
       }
 
-      let queryVec = null;
-      try {
-        const embedder = await getModel('feature-extraction', stateInstance.config && stateInstance.config.modelSettings ? stateInstance.config.modelSettings.embedder : undefined, 'embedder');
-        if (embedder) {
-          const queryOut = await embedder(query, { pooling: 'mean', normalize: true });
-          queryVec = Array.from(queryOut.data);
-        }
-      } catch (e) {}
+      const queryVec = await embedText(query);
 
       const scored = [];
       for (const rec of records) {
@@ -484,7 +502,7 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
           if (matchCount > 0) scored.push({ rec, score: matchCount * 0.2 });
         }
       }
-      scored.sort((a, b) => b.score - a.score);
+      scored.sort((a, b) => (b.score - a.score) || ((b.rec.createdAt || 0) - (a.rec.createdAt || 0)));
       const top = scored.slice(0, 5);
       if (!top.length) {
         return {
@@ -624,14 +642,23 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
       let ts = params.timestamp;
       if (!ts) {
         const history = await configAPI.getHistory(2);
-        if (history.length > 0) ts = history[0].id;
-        else {
+        if (history.length === 0) {
           return {
             text: await composeToolText('rollback_config', {
               message: '', params: {}, result: { empty: true }
             }, "No configuration snapshots available for rollback.")
           };
         }
+        if (history.length < 2) {
+          return {
+            text: await composeToolText('rollback_config', {
+              message: '', params: {}, result: { empty: true }
+            }, "No previous configuration state to roll back to (only the current snapshot exists).")
+          };
+        }
+        // history[0] is the most recent snapshot (== current config); the
+        // previous state is the snapshot captured by the prior change.
+        ts = history[1].id;
       }
       const res = await configAPI.rollback(ts);
       return {
@@ -792,6 +819,11 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         return { text: `Specialist routing to ${specialist.name} failed: ${delegation.error}` };
       }
       const detected = await detectIntent(params.query, stateInstance);
+      const detectedName = (typeof detected === 'object' && detected)
+        ? (detected.tool || detected.name || '') : detected;
+      if (detectedName === 'route_to_specialist') {
+        return { text: "I couldn't find a specialist or a matching tool for that request. Could you rephrase it?" };
+      }
       return await executeTool(detected, params.query, stateInstance);
     }
   });
@@ -806,26 +838,22 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
     icon: 'bi-globe',
     execute: async (params) => {
       const q = params.query;
-      if (!isBrowser) {
-        return {
-          text: await composeToolText('web_search', {
-            message: q,
-            params: { query: q },
-            result: { offline: true, query: q }
-          }, `### 🔍 Web Search for "${q}":\n\nOffline placeholder. [Search directly on DuckDuckGo](https://duckduckgo.com/?q=${encodeURIComponent(q)}).`)
-        };
-      }
       try {
         const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`);
+        if (!res.ok) throw new Error(`DuckDuckGo responded with ${res.status}`);
         const data = await res.json();
         const results = [];
         if (data.Abstract) results.push(`**Abstract:** ${data.Abstract}`);
-        if (data.RelatedTopics && Array.isArray(data.RelatedTopics)) {
-          const topics = data.RelatedTopics.slice(0, 4)
-            .filter(t => t.Text && t.FirstURL)
-            .map(t => `- [${t.Text}](${t.FirstURL})`);
-          if (topics.length) results.push(`**Related:**\n${topics.join('\n')}`);
-        }
+        const flatTopics = (items, out = []) => {
+          for (const it of items || []) {
+            if (it && it.Text && it.FirstURL) out.push(it);
+            else if (it && Array.isArray(it.Topics)) flatTopics(it.Topics, out);
+          }
+          return out;
+        };
+        const topics = flatTopics(data.RelatedTopics).slice(0, 4)
+          .map(t => `- [${t.Text}](${t.FirstURL})`);
+        if (topics.length) results.push(`**Related:**\n${topics.join('\n')}`);
         if (results.length === 0) {
           return {
             text: await composeToolText('web_search', {
@@ -926,6 +954,12 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
       const newName = String(params.name || '').trim();
       if (!newName) return { text: "Please provide a valid character name." };
       await configAPI.updateCharacter(current.id, { name: newName });
+      if (isBrowser) {
+        try {
+          const ui = await import('./ui.js');
+          ui.renderExplorer?.();
+        } catch (_) { /* the rename still persisted even if the UI can't refresh */ }
+      }
       return {
         text: await composeToolText('change_character_name', {
           message: newName,
@@ -935,6 +969,10 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
       };
     }
   });
+
+  // Group the freshly-registered tools into named extensions (Pi-style bundles)
+  // and attach the extension registry to this registry instance.
+  applyBuiltinExtensions(extensionRegistry, registry);
 }
 
 // Small helper: reconstruct a plausible "message" for response composition.
@@ -943,4 +981,23 @@ function inputFor(params, stateInstance) {
   if (params.description) return params.description;
   if (params.query) return params.query;
   return '';
+}
+
+// Local date helpers (avoid UTC date drift for "today"-style defaults).
+function todayLocal() {
+  const d = new Date();
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function addDaysLocal(n) {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+}
+
+function slugify(text) {
+  return String(text || '').toLowerCase().trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48);
 }

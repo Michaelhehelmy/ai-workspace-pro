@@ -2,3 +2,12 @@
 .env
 
 database.db*
+
+node_modules/
+.cache/
+coverage/
+
+# Cloudflare Workers
+.wrangler/
+.dev.vars
+worker-configuration.d.ts

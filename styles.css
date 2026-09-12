@@ -1,36 +1,162 @@
 /* ==========================================================================
    AI Workspace Pro - Modern CSS Stylesheet
+   Fully responsive · light/dark · refined typography & motion
    ========================================================================== */
 
+/* --------------------------------------------------------------------------
+   Design tokens
+   -------------------------------------------------------------------------- */
 :root {
   --app-primary: #4f46e5;
+  --app-primary-700: #4338ca;
+  --app-accent: #7c3aed;
+
   --sidebar-default-width: 280px;
   --sidebar-min-width: 200px;
   --sidebar-max-width: 500px;
+
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
+  --radius-pill: 2rem;
+
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 2px 6px -1px rgba(16, 24, 40, 0.08);
+  --shadow-md: 0 10px 28px -12px rgba(16, 24, 40, 0.22);
+  --shadow-lg: 0 24px 60px -24px rgba(16, 24, 40, 0.45);
+  --shadow-primary: 0 10px 24px -10px rgba(79, 70, 229, 0.6);
+
+  --gradient-brand: linear-gradient(135deg, #6366f1 0%, #4f46e5 45%, #7c3aed 100%);
+  --gradient-user-bubble: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
+
+  --chat-col-max: 54rem;
+
+  --app-font: "Inter", ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --app-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+    Consolas, "Liberation Mono", monospace;
+}
+
+/* Softer, cooler shadows in dark mode */
+[data-bs-theme="dark"] {
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 2px 8px -1px rgba(0, 0, 0, 0.5);
+  --shadow-md: 0 12px 32px -12px rgba(0, 0, 0, 0.65);
+  --shadow-lg: 0 28px 70px -26px rgba(0, 0, 0, 0.8);
+  --shadow-primary: 0 10px 26px -10px rgba(99, 102, 241, 0.55);
 }
 
 /* --------------------------------------------------------------------------
-   Layout & Container
+   Base & app shell — soft ambient mesh background
    -------------------------------------------------------------------------- */
-#sidebar {
-  width: var(--sidebar-default-width);
-  min-width: var(--sidebar-min-width);
-  max-width: var(--sidebar-max-width);
-  transition: width 0.05s ease-out;
-  position: relative;
+body {
+  font-family: var(--app-font) !important;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  background:
+    radial-gradient(1100px 520px at 90% -10%, rgba(var(--bs-primary-rgb), 0.09), transparent 62%),
+    radial-gradient(950px 520px at -12% 112%, rgba(var(--bs-info-rgb), 0.07), transparent 58%),
+    var(--bs-body-bg);
+  background-attachment: fixed;
 }
 
-/* Resize handle for sidebar */
-#resizeHandle {
-  width: 6px;
-  cursor: col-resize;
+#mainContainer {
+  overscroll-behavior: none;
+}
+
+/* Bootstrap does not ship a min-width: 0 utility; the app relies on it for
+   flex children (text truncation + prevents min-content overflow blowouts). */
+.min-w-0 {
+  min-width: 0 !important;
+}
+
+/* Likewise min-height: 0 is not a Bootstrap utility. Without it, flex panes
+   cannot shrink below their content, so overflow-auto tabs stretch the hidden
+   container and content below the fold becomes unreachable. */
+.min-h-0 {
+  min-height: 0 !important;
+}
+
+/* Tab panes must be allowed to shrink to their container so overflow scrolls
+   internally instead of running past the visible canvas. */
+.tab-pane {
+  min-height: 0;
+}
+
+/* --------------------------------------------------------------------------
+   Selection & scrollbars
+   -------------------------------------------------------------------------- */
+::selection {
+  background: var(--bs-primary);
+  color: #fff;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
   background: transparent;
-  flex-shrink: 0;
-  position: absolute;
-  top: 0;
-  right: -3px;
-  bottom: 0;
-  z-index: 1050;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--bs-border-color);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--bs-secondary-color);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+/* --------------------------------------------------------------------------
+   Sidebar
+   -------------------------------------------------------------------------- */
+#sidebar {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Desktop: resizable fixed-width column */
+@media (min-width: 992px) {
+  #sidebar {
+    flex: 0 0 auto;
+    width: var(--sidebar-default-width);
+    min-width: var(--sidebar-min-width);
+    max-width: var(--sidebar-max-width);
+    transition: width 0.08s ease-out;
+    position: relative;
+  }
+}
+
+/* Mobile / tablet: elegant offcanvas panel */
+@media (max-width: 991.98px) {
+  .offcanvas-lg.offcanvas-start {
+    width: min(340px, 86vw);
+  }
+}
+
+/* Resize handle for sidebar (desktop only) */
+#resizeHandle {
+  display: none;
+}
+
+@media (min-width: 992px) {
+  #resizeHandle {
+    display: block;
+    width: 6px;
+    cursor: col-resize;
+    background: transparent;
+    flex-shrink: 0;
+    position: absolute;
+    top: 0;
+    right: -3px;
+    bottom: 0;
+    z-index: 1050;
+  }
 }
 
 #resizeHandle > div {
@@ -53,79 +179,815 @@
   height: 48px;
 }
 
+/* Brand block */
+#sidebar .brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gradient-brand);
+  color: #fff;
+  font-size: 1.15rem;
+  box-shadow: var(--shadow-primary);
+  flex-shrink: 0;
+}
+
+/* Navigation pills — icon chip style */
+#workspaceTabs .nav-link {
+  border-radius: var(--radius-md);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.92rem;
+  font-weight: 600;
+  color: var(--bs-body-color);
+  transition: background 0.15s ease, transform 0.1s ease, color 0.15s ease, box-shadow 0.15s ease;
+}
+
+#workspaceTabs .nav-link i {
+  width: 1.3rem;
+  text-align: center;
+  font-size: 1rem;
+  color: var(--bs-secondary-color);
+  transition: color 0.15s ease;
+}
+
+#workspaceTabs .nav-link:not(.active):hover {
+  background: var(--bs-tertiary-bg);
+  transform: translateX(2px);
+}
+
+#workspaceTabs .nav-link.active {
+  background: var(--gradient-brand);
+  box-shadow: var(--shadow-primary);
+}
+
+#workspaceTabs .nav-link.active i {
+  color: #fff;
+}
+
+/* Bottom controls */
+#sidebar .border-top {
+  border-color: var(--bs-border-color) !important;
+}
+
+#sidebar .btn-outline-secondary,
+#sidebar .btn-outline-primary {
+  border-radius: var(--radius-md);
+}
+
 /* --------------------------------------------------------------------------
-   Chat Area & Messages
+   Mobile top navigation bar
+   -------------------------------------------------------------------------- */
+#mobileTopBar {
+  box-shadow: var(--shadow-xs);
+  backdrop-filter: blur(8px);
+  background: color-mix(in srgb, var(--bs-body-bg) 88%, transparent) !important;
+}
+
+#mobileTopBar #mobileBrandName {
+  font-size: 0.95rem;
+  letter-spacing: -0.01em;
+}
+
+/* --------------------------------------------------------------------------
+   Pane headers
+   -------------------------------------------------------------------------- */
+.tab-pane h4 {
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  font-size: 1.3rem;
+}
+
+.tab-pane h4 + small {
+  letter-spacing: 0.01em;
+}
+
+/* --------------------------------------------------------------------------
+   Chat area & messages — human conversational feel
    -------------------------------------------------------------------------- */
 #pane-chat {
   height: 0;
+  position: relative;
+}
+
+/* Floating "jump to latest" button */
+.chat-jump {
+  position: absolute;
+  right: 1rem;
+  bottom: 7.5rem;
+  z-index: 5;
+  border-radius: 50rem;
+  box-shadow: var(--shadow-primary);
+  padding: 0.35rem 0.8rem;
 }
 
 #chatMessages {
   scroll-behavior: smooth;
+  display: flex;
+  flex-direction: column;
 }
 
-.chat-bubble {
-  max-width: 78%;
-  line-height: 1.5;
-  word-break: break-word;
-  transition: transform 0.2s ease-out, opacity 0.2s ease-out;
+/* Message row + avatar stack */
+.msg-row {
+  display: flex;
+  gap: 0.6rem;
+  max-width: 100%;
+  margin-bottom: 0.95rem;
+  animation: msg-in 0.28s ease-out both;
 }
-.chat-bubble-enter {
-  transform: translateY(10px);
+
+.msg-row.from-user {
+  flex-direction: row-reverse;
+}
+
+/* Comfortable reading column on wide screens */
+@media (min-width: 1200px) {
+  .msg-row {
+    max-width: var(--chat-col-max);
+  }
+  .msg-row.from-user {
+    margin-left: auto;
+  }
+  .msg-row.from-bot {
+    margin-right: auto;
+  }
+}
+
+@keyframes msg-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.msg-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.05rem;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+  box-shadow: var(--shadow-xs);
+  user-select: none;
+}
+
+.msg-row.from-user .msg-avatar {
+  background: var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+}
+
+.msg-body {
+  display: flex;
+  flex-direction: column;
+  max-width: 82%;
+  min-width: 0;
+}
+
+.msg-row.from-user .msg-body {
+  align-items: flex-end;
+}
+
+.msg-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  margin: 0 0.35rem 0.22rem;
+  color: var(--bs-secondary-color);
+}
+
+.msg-name { font-weight: 600; letter-spacing: -0.01em; }
+.msg-time { opacity: 0.72; }
+
+/* Copy button on assistant/system messages */
+.msg-copy {
   opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease;
+  color: var(--bs-secondary-color);
+  line-height: 1;
 }
-.chat-bubble-enter-active {
-  transform: translateY(0);
+.msg-row:hover .msg-copy,
+.msg-copy:focus-visible {
   opacity: 1;
 }
+.msg-copy:hover { color: var(--bs-primary); }
+@media (hover: none) {
+  .msg-copy { opacity: 1; }
+}
 
-.chat-bubble pre {
-  background: rgba(0, 0, 0, 0.06);
-  padding: 0.75rem;
-  border-radius: 0.5rem;
+.msg-bubble {
+  position: relative;
+  padding: 0.6rem 0.95rem;
+  line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  border-radius: 1.05rem;
+  font-size: 0.95rem;
+}
+
+/* Slight asymmetry so bubbles read as "tails" */
+.msg-row.from-bot .msg-bubble {
+  border-top-left-radius: 0.35rem;
+}
+.msg-row.from-user .msg-bubble {
+  border-bottom-right-radius: 0.35rem;
+}
+
+.msg-row.from-bot .msg-bubble {
+  background: linear-gradient(180deg, var(--bs-body-bg),
+    color-mix(in srgb, var(--bs-body-bg) 94%, var(--bs-secondary-color) 6%));
+  border: 1px solid var(--bs-border-color);
+  color: var(--bs-body-color);
+  box-shadow: var(--shadow-xs);
+}
+
+.msg-row.from-user .msg-bubble {
+  background: var(--gradient-user-bubble);
+  color: #fff;
+  box-shadow: var(--shadow-primary);
+}
+
+.msg-bubble .emoji-badge {
+  margin-right: 0.3rem;
+  user-select: none;
+}
+
+.msg-row.from-user .emoji-badge { display: none; }
+
+/* Markdown-rich assistant bubbles */
+.chat-md > *:first-child { margin-top: 0; }
+.chat-md > *:last-child { margin-bottom: 0; }
+.chat-md p { margin: 0.35rem 0; }
+.chat-md ul, .chat-md ol { padding-left: 1.25rem; margin: 0.35rem 0; }
+.chat-md h1, .chat-md h2, .chat-md h3, .chat-md h4 {
+  font-size: 1.02rem;
+  margin: 0.7rem 0 0.3rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.chat-md blockquote {
+  border-left: 3px solid var(--bs-primary-border-subtle);
+  padding-left: 0.7rem;
+  margin: 0.4rem 0;
+  color: var(--bs-secondary-color);
+}
+.chat-md hr { margin: 0.6rem 0; opacity: 0.4; }
+
+.chat-md pre {
+  background: rgba(127, 127, 127, 0.12);
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.55rem;
+  border: 1px solid color-mix(in srgb, var(--bs-border-color) 70%, transparent);
   overflow-x: auto;
-  font-size: 0.875rem;
+  font-size: 0.8rem;
+  margin: 0.5rem 0;
+  scrollbar-width: thin;
 }
+[data-bs-theme="dark"] .chat-md pre { background: rgba(255, 255, 255, 0.06); }
 
-[data-bs-theme="dark"] .chat-bubble pre {
-  background: rgba(255, 255, 255, 0.08);
+.chat-md code {
+  font-size: 0.86em;
+  padding: 0.15em 0.4em;
+  border-radius: 0.3rem;
+  background: rgba(127, 127, 127, 0.18);
+  font-family: var(--app-mono);
 }
+.chat-md pre code { background: none; padding: 0; border: 0; }
 
-.chat-bubble code {
-  font-size: 0.875em;
-  padding: 0.15em 0.35em;
-  border-radius: 0.25rem;
-}
-
-.chat-bubble table {
-  width: 100%;
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
+.chat-md table {
+  display: block;
+  max-width: 100%;
+  width: max-content;
+  overflow-x: auto;
+  margin: 0.5rem 0;
   border-collapse: collapse;
+  font-size: 0.82rem;
+  scrollbar-width: thin;
 }
-
-.chat-bubble table th,
-.chat-bubble table td {
+.chat-md table th, .chat-md table td {
   padding: 0.35rem 0.6rem;
   border: 1px solid var(--bs-border-color);
-  font-size: 0.875rem;
+  white-space: nowrap;
+}
+.chat-md table th {
+  background: rgba(127, 127, 127, 0.12);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-size: 0.74rem;
+}
+.chat-md table tr:nth-child(even) td { background: rgba(127, 127, 127, 0.05); }
+
+/* Typing indicator (agent).avatar + bubbling dots */
+.msg-typing .msg-avatar { animation: typing-breathe 1.6s ease-in-out infinite; }
+@keyframes typing-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
 }
 
-.chat-bubble table th {
-  background: rgba(0, 0, 0, 0.04);
+.typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.32rem;
+  padding: 0.7rem 1rem;
+}
+.typing-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--bs-secondary-color);
+  display: inline-block;
+  animation: typing-pulse 1.2s infinite;
+  animation-delay: calc(0.16s * var(--i, 0));
+}
+[data-bs-theme="dark"] .typing-dots span { background: var(--bs-secondary); }
+@keyframes typing-pulse {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.45; }
+  30% { transform: translateY(-4px); opacity: 1; }
 }
 
-[data-bs-theme="dark"] .chat-bubble table th {
-  background: rgba(255, 255, 255, 0.05);
+/* Word-by-word reveal cursor */
+.msg-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  vertical-align: -0.12em;
+  margin-left: 2px;
+  background: var(--bs-primary);
+  animation: caret-blink 0.8s steps(2) infinite;
+}
+@keyframes caret-blink { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+/* Greeting / empty state */
+#chatEmptyState {
+  max-width: 34rem;
+  margin: 4rem auto auto;
+  text-align: center;
+  animation: msg-in 0.4s ease-out both;
+}
+#chatEmptyState .emblem {
+  width: 68px;
+  height: 68px;
+  border-radius: 1.15rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 2rem;
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary);
+  box-shadow: inset 0 0 0 1px var(--bs-primary-border-subtle), var(--shadow-md);
+  transition: transform 0.25s ease;
+}
+#chatEmptyState:hover .emblem { transform: scale(1.05) rotate(-3deg); }
+#chatEmptyState h5 { font-weight: 650; letter-spacing: -0.015em; }
+
+/* Config issues banner (soft, rounded) */
+#configIssuesBanner {
+  border-bottom: 1px solid var(--bs-danger-border-subtle);
+  background: color-mix(in srgb, var(--bs-danger-bg-subtle) 92%, transparent);
+  color: var(--bs-danger-text-emphasis);
 }
 
 /* --------------------------------------------------------------------------
-   Avatars & Badges
+   Composer — floating pill input bar
+   -------------------------------------------------------------------------- */
+.composer-bar {
+  padding-bottom: calc(0.75rem + env(safe-area-inset-bottom, 0px));
+}
+
+#chatComposer {
+  padding: 0.28rem 0.4rem;
+  gap: 0.25rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: var(--radius-pill);
+  background: var(--bs-body-bg);
+  box-shadow: var(--shadow-sm), inset 0 0 0 1px color-mix(in srgb, var(--bs-body-bg) 96%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.2s ease;
+}
+
+#chatComposer:focus-within {
+  border-color: var(--bs-primary);
+  box-shadow: var(--shadow-md), 0 0 0 0.22rem var(--bs-primary-bg-subtle);
+}
+
+#chatComposer .form-control {
+  border: 0;
+  border-radius: var(--radius-pill) !important;
+  box-shadow: none !important;
+  background: transparent;
+  padding: 0.45rem 0.85rem;
+}
+
+#chatInput {
+  resize: none;
+  max-height: 140px;
+  transition: height 0.12s ease;
+  font-size: 0.95rem;
+}
+
+#chatComposer .btn {
+  border-radius: var(--radius-pill);
+  border: 0;
+  flex-shrink: 0;
+}
+
+#chatComposer #micBtn {
+  background: transparent;
+  color: var(--bs-secondary-color);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+#chatComposer #micBtn:hover {
+  background: var(--bs-tertiary-bg);
+  color: var(--bs-body-color);
+}
+
+#chatComposer #sendBtn {
+  background: var(--gradient-brand);
+  box-shadow: var(--shadow-primary);
+  padding-left: 1.15rem;
+  padding-right: 1.15rem;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease;
+}
+#chatComposer #sendBtn:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 12px 26px -10px rgba(79, 70, 229, 0.7);
+  transform: translateY(-1px);
+}
+#chatComposer #sendBtn:active { transform: translateY(0); }
+
+.composer-meta {
+  color: var(--bs-secondary-color);
+  font-size: 0.72rem;
+}
+.composer-meta kbd {
+  font-size: 0.66rem;
+  border-radius: 0.3rem;
+  padding: 0.08rem 0.3rem;
+  box-shadow: none;
+  color: var(--bs-secondary-color);
+}
+
+#sendBtn.processing { pointer-events: none; opacity: 0.85; }
+
+/* --------------------------------------------------------------------------
+   Quick prompts — horizontally scrolling chips
+   -------------------------------------------------------------------------- */
+#quickPromptsContainer {
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%);
+}
+#quickPromptsContainer::-webkit-scrollbar { display: none; }
+
+.quick-prompt {
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  padding: 0.32rem 0.85rem;
+  border-color: var(--bs-border-color);
+  transition: border-color 0.15s ease, color 0.15s ease, transform 0.12s ease, box-shadow 0.15s ease;
+}
+.quick-prompt:hover {
+  border-color: var(--bs-primary);
+  color: var(--bs-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-sm);
+}
+
+/* --------------------------------------------------------------------------
+   Data Explorer
+   -------------------------------------------------------------------------- */
+#pane-explorer h4 { font-size: 1.35rem; }
+
+#dataStatsBar .badge {
+  border-radius: var(--radius-pill);
+  padding: 0.42rem 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+#dataStatsBar .badge i { color: var(--bs-primary); }
+
+.explorer-table-container {
+  max-height: 540px;
+}
+
+.tab-pane .card {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--bs-border-color);
+  box-shadow: var(--shadow-xs);
+  overflow: hidden;
+}
+
+.tab-pane .card-header {
+  background: var(--bs-tertiary-bg);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+.tab-pane .card-header small {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+}
+
+/* Tables */
+.table {
+  --bs-table-striped-bg: rgba(127, 127, 127, 0.04);
+}
+.table thead th {
+  font-size: 0.73rem;
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+  color: var(--bs-secondary-color);
+  background: var(--bs-tertiary-bg);
+  border-bottom: 1px solid var(--bs-border-color) !important;
+  font-weight: 600;
+}
+.table td {
+  font-size: 0.9rem;
+}
+.table-hover tbody tr {
+  transition: background-color 0.12s ease;
+}
+
+.table-responsive {
+  scrollbar-width: thin;
+}
+
+/* Sticky first column so mobile users keep the primary value in view */
+#explorerTableHead th:first-child,
+#explorerTableBody td:first-child,
+#pane-models .table thead th:first-child,
+#pane-models .table tbody td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  box-shadow: 1px 0 0 var(--bs-border-color);
+}
+#explorerTableHead th:first-child,
+#pane-models .table thead th:first-child { background: var(--bs-tertiary-bg); }
+#explorerTableBody td:first-child,
+#pane-models .table tbody td:first-child { background: var(--bs-body-bg); }
+.table-hover #explorerTableBody tr:hover td:first-child,
+#pane-models .table-hover tbody tr:hover td:first-child {
+  background: var(--bs-table-hover-bg, var(--bs-tertiary-bg));
+}
+
+#tableFilterInput {
+  max-width: 340px;
+}
+
+/* --------------------------------------------------------------------------
+   List groups — characters / businesses / tools
+   -------------------------------------------------------------------------- */
+#characterList, #businessList, #toolsList, #configHistoryList {
+  gap: 0.5rem;
+}
+
+#characterList .list-group-item,
+#businessList .list-group-item,
+#toolsList .list-group-item,
+#configHistoryList .list-group-item {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--bs-border-color);
+  box-shadow: var(--shadow-xs);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+#characterList .list-group-item:hover,
+#businessList .list-group-item:hover,
+#toolsList .list-group-item:hover,
+#configHistoryList .list-group-item:hover {
+  box-shadow: var(--shadow-sm);
+  transform: translateY(-1px);
+}
+
+#characterList .list-group-item.active,
+#businessList .list-group-item.active {
+  background: var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+  color: var(--bs-body-color);
+  box-shadow: inset 0 0 0 1px var(--bs-primary-border-subtle), var(--shadow-sm);
+}
+#characterList .list-group-item.active strong,
+#businessList .list-group-item.active strong { color: var(--bs-primary); }
+
+/* Tool rows: icon chip */
+#toolsList .list-group-item > div > i {
+  width: 38px;
+  height: 38px;
+  border-radius: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bs-primary-bg-subtle);
+  color: var(--bs-primary);
+  margin-right: 0.6rem;
+  font-size: 1.1rem;
+  float: left;
+}
+
+/* --------------------------------------------------------------------------
+   Models tab panels
+   -------------------------------------------------------------------------- */
+#pane-models .form-select,
+#pane-models .form-control {
+  border-radius: var(--radius-sm);
+}
+
+#pane-models .badge {
+  border-radius: var(--radius-pill);
+}
+
+#modelProgress {
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  background: var(--bs-tertiary-bg);
+}
+.progress-bar {
+  background: var(--gradient-brand);
+  transition: width 0.3s ease;
+  position: relative;
+}
+
+#modelStagesList li,
+#deviceRecList li {
+  border-radius: var(--radius-pill);
+  padding: 0.3rem 0.75rem;
+  font-size: 0.8rem;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+}
+
+/* Model catalog table */
+#modelCatalogBody {
+  vertical-align: middle;
+}
+
+/* --------------------------------------------------------------------------
+   Forms, buttons, dropdowns
+   -------------------------------------------------------------------------- */
+.form-control,
+.form-select {
+  border-radius: var(--radius-sm);
+}
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--bs-primary);
+  box-shadow: 0 0 0 0.22rem var(--bs-primary-bg-subtle);
+}
+
+.btn {
+  border-radius: var(--radius-md);
+  transition: background-color 0.15s ease, border-color 0.15s ease,
+    color 0.15s ease, box-shadow 0.15s ease, transform 0.1s ease, filter 0.15s ease;
+}
+.btn:active { transform: translateY(0); }
+
+.btn-primary {
+  background: var(--gradient-brand);
+  border: 0;
+  box-shadow: var(--shadow-primary);
+}
+.btn-primary:hover {
+  background-image: linear-gradient(135deg, #6d68f4 0%, #5b52ee 45%, #8b5cf6 100%);
+  filter: brightness(1.03);
+}
+
+.btn-outline-primary {
+  border-color: var(--bs-primary-border-subtle);
+  color: var(--bs-primary);
+}
+.btn-outline-primary:hover {
+  background: var(--bs-primary);
+  border-color: var(--bs-primary);
+  box-shadow: var(--shadow-primary);
+}
+
+.dropdown-menu {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--bs-border-color);
+  padding: 0.4rem;
+}
+.dropdown-item {
+  border-radius: 0.45rem;
+  margin-bottom: 0.15rem;
+  font-size: 0.9rem;
+}
+.dropdown-item:focus,
+.dropdown-item:hover {
+  background: var(--bs-tertiary-bg);
+}
+
+/* --------------------------------------------------------------------------
+   Modals — subtle top accent, bottom-sheet on phones
+   -------------------------------------------------------------------------- */
+.modal-content {
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--bs-border-color);
+  box-shadow: var(--shadow-lg);
+  overflow: hidden;
+}
+.modal-header {
+  border-bottom-color: var(--bs-border-color);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--bs-primary-bg-subtle) 60%, transparent), transparent);
+}
+.modal-title { font-weight: 650; letter-spacing: -0.01em; }
+.modal-footer {
+  border-top: 1px solid var(--bs-border-color);
+}
+
+@media (max-width: 575.98px) {
+  /* Bottom-sheet modals must never overflow the top of the screen and must
+     scroll internally. A min-height here made the dialog taller than the
+     viewport, clipping the header with no way to reach it. */
+  .modal.show {
+    display: flex;
+    align-items: flex-end;
+  }
+  .modal-dialog {
+    margin: 0;
+    width: 100%;
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-content {
+    max-height: 100%;
+    display: flex;
+    flex-direction: column;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    border: 0;
+  }
+  .modal-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Toasts
+   -------------------------------------------------------------------------- */
+#toastContainer {
+  z-index: 1090;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+}
+
+#toastContainer .toast {
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  animation: toast-in 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(14px) scale(0.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* --------------------------------------------------------------------------
+   Config editor & history
+   -------------------------------------------------------------------------- */
+#configEditor {
+  font-family: var(--app-mono) !important;
+  font-size: 0.8rem;
+  border-radius: var(--radius-md);
+  line-height: 1.55;
+}
+#configHistoryList {
+  max-height: 300px;
+  overflow-y: auto;
+}
+#configHistoryList .list-group-item {
+  font-size: 0.85rem;
+}
+#configHistoryList .list-group-item.active {
+  background: var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+  color: var(--bs-body-color);
+}
+
+/* --------------------------------------------------------------------------
+   Avatars & badges
    -------------------------------------------------------------------------- */
 .avatar-header {
   width: 44px;
   height: 44px;
   font-size: 1.25rem;
+  transition: transform 0.25s ease;
+  border: 2px solid color-mix(in srgb, var(--bs-body-bg) 80%, transparent);
+}
+.avatar-header.talking { animation: avatar-talk 0.8s ease-in-out infinite; }
+@keyframes avatar-talk {
+  0%, 100% { transform: scale(1) rotate(0deg); }
+  25% { transform: scale(1.06) rotate(-3deg); }
+  75% { transform: scale(1.02) rotate(3deg); }
+}
+.avatar-header.pulsed { animation: avatar-pop 0.4s ease; }
+@keyframes avatar-pop {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.12); }
+  100% { transform: scale(1); }
 }
 
 .chat-avatar {
@@ -153,50 +1015,59 @@
 }
 
 /* --------------------------------------------------------------------------
-   Data Explorer Table
+   Keyboard accessibility
    -------------------------------------------------------------------------- */
-.explorer-table-container {
-  max-height: 540px;
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--bs-primary);
+  outline-offset: 2px;
+  border-radius: 0.3rem;
 }
 
 /* --------------------------------------------------------------------------
-   Config Editor & History
+   Motion preferences
    -------------------------------------------------------------------------- */
-#configHistoryList {
-  max-height: 300px;
-  overflow-y: auto;
+@media (prefers-reduced-motion: reduce) {
+  .msg-row, .msg-typing .msg-avatar, #chatEmptyState { animation: none !important; }
+  .typing-dots span, .msg-caret { animation: none !important; }
+  #chatMessages { scroll-behavior: auto; }
+  #toastContainer .toast { animation: none; }
+  .quick-prompt, .btn, .card, .list-group-item { transition: none !important; }
 }
 
 /* --------------------------------------------------------------------------
-   Toasts
+   Mobile refinements
    -------------------------------------------------------------------------- */
-#toastContainer {
-  z-index: 1090;
+@media (max-width: 575.98px) {
+  .tab-pane { padding: 0.9rem !important; }
+
+  .msg-avatar {
+    width: 30px;
+    height: 30px;
+    font-size: 0.95rem;
+  }
+  .msg-row { gap: 0.45rem; margin-bottom: 0.7rem; }
+  .msg-body { max-width: 92%; }
+  .msg-bubble { font-size: 0.93rem; }
+
+  #chatComposer { padding: 0.22rem 0.3rem; }
+  #chatComposer #sendBtn { padding-left: 0.9rem; padding-right: 0.9rem; }
+
+  /* Keep table actions on one line */
+  #explorerTableBody td { font-size: 0.84rem; }
+  .explorer-table-container { max-height: 420px; }
+
+  /* Model stage cards stack cleanly */
+  #pane-models .row.g-3 > [class*="col"] { margin-bottom: 0.75rem; }
+
+  .tool-icon.chat-avatar { display: none; }
 }
 
 /* --------------------------------------------------------------------------
-   Custom Scrollbar
-   -------------------------------------------------------------------------- */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--bs-body-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--bs-border-color);
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--bs-secondary);
-}
-
-/* --------------------------------------------------------------------------
-   Test Runner Styles
+   Test Runner Styles (unchanged behavior)
    -------------------------------------------------------------------------- */
 .test-pass { color: var(--bs-success, #198754); }
 .test-fail { color: var(--bs-danger, #dc3545); }
@@ -204,7 +1075,7 @@
 pre.test-pre {
   background: var(--bs-tertiary-bg, #f8f9fa);
   padding: 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
   max-height: 200px;
   overflow-y: auto;
 }

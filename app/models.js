@@ -1,347 +1,370 @@
 /**
- * app/models.js - ModelScheduler
+ * app/models.js - Model coordinator (public model API)
  *
- * A staged multi-model runtime. Instead of loading a big model and keeping
- * every model resident, we keep a set of SMALL specialist models and load
- * exactly ONE at a time (policy: "swap"). The previous model is disposed
- * (ONNX session released) before the next stage loads, so memory footprint
- * stays roughly constant and small.
+ * This is the app's front-door for everything model-related, and it is now a
+ * thin coordinator over pluggable LLM backends:
  *
- * Stages:
- *   encoder → feature-extraction  (semantic embeddings / retrieval / tool scoring)
- *   intent  → zero-shot-classification (intent, personas, small talk)
- *   tagger  → token-classification (entity / parameter extraction)
- *   dialog  → text2text-generation (natural-language responses)
+ *   • app/ai/backend.js — the backend interface, registry, shared contracts
+ *     (ModelError, PIPELINE_STAGES, resolveStage).
+ *   • app/ai/transformers-backend.js — the on-device Transformers.js provider
+ *     (scheduler, swap policy, preloads).
+ *   • app/ai/llamacpp-backend.js / app/ai/ollama-backend.js — local-API
+ *     providers (added in Phase 1, routed per stage via app.ai.backends).
  *
- * Every stage degrades gracefully: in Node or offline the Transformer import
- * throws and we return null, letting deterministic fallbacks take over.
+ * models.js keeps every public function the rest of the app already imports
+ * (see app.js / test.js / pipeline.js) so the migration is behavior-preserving:
+ * it re-exports the Transformers scheduler, and keeps the catalog helpers,
+ * the direct-import model loader, and the best-effort embedding helpers here.
  */
 
 import { isBrowser } from '../core/env.js';
 import { state, getActiveBusiness } from '../core/state.js';
 import { populateModelSelects, renderConfigEditor } from './ui.js';
-
-// ── Stage registry ──────────────────────────────────────────────────────────
-export const PIPELINE_STAGES = {
-  encoder: { key: 'encoder', task: 'feature-extraction',        role: 'embedder',   default: 'Xenova/all-MiniLM-L6-v2',          mb: 90 },
-  intent:  { key: 'intent',  task: 'zero-shot-classification',  role: 'classifier', default: 'Xenova/mobilebert-uncased-mnli',   mb: 110 },
-  tagger:  { key: 'tagger',  task: 'token-classification',      role: 'ner',        default: 'Xenova/bert-base-NER',             mb: 180 },
-  dialog:  { key: 'dialog',  task: 'text2text-generation',      role: 'generator',  default: 'Xenova/LaMini-Flan-T5-248M',        mb: 260 }
-};
-
-const ROLE_TO_STAGE = { embedder: 'encoder', classifier: 'intent', ner: 'tagger', generator: 'dialog' };
-const TASK_TO_STAGE = {
-  'feature-extraction': 'encoder',
-  'zero-shot-classification': 'intent',
-  'token-classification': 'tagger',
-  'text2text-generation': 'dialog'
-};
-
-let transformModule = null;
-let loadPromise = null;
-let mutedTransformersWarnings = false;
-
-// ── Scheduler state — one active model at a time ─────────────────────────────
-const active = { key: null, modelId: null, pipe: null };
-let chain = Promise.resolve();
-
-function pipelineStatus() {
-  return state.pipeline || (state.pipeline = { status: 'idle', stage: null, model: null, queue: 0, loads: 0 });
-}
-
-function pipelineConfig() {
-  return (state.config && state.config.modelSettings && state.config.modelSettings.pipeline) || null;
-}
-
-function stageModel(stageDef) {
-  const pipeCfg = pipelineConfig();
-  if (pipeCfg && Array.isArray(pipeCfg.stages)) {
-    const match = pipeCfg.stages.find(s => s.key === (stageDef && stageDef.key));
-    if (match && match.model) return match.model;
-  }
-  const ms = state.config && state.config.modelSettings;
-  if (ms) {
-    if (stageDef.key === 'encoder' && ms.embedder) return ms.embedder;
-    if (stageDef.key === 'intent' && ms.classifier) return ms.classifier;
-    if (stageDef.key === 'dialog' && ms.generator) return ms.generator;
-  }
-  return stageDef.default;
-}
-
-export function getTransformers() {
-  if (transformModule) return Promise.resolve(transformModule);
-  if (loadPromise) return loadPromise;
-
-  loadPromise = (async () => {
-    if (isBrowser && window.transformers) {
-      transformModule = window.transformers;
-      return transformModule;
-    }
-
-    try {
-      const mod = await import(
-        'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.3.3/dist/transformers.min.js'
-      );
-      if (mod && mod.pipeline) transformModule = mod;
-    } catch (e1) {
-      try {
-        const mod = await import('@xenova/transformers@2.17.2');
-        if (mod && mod.pipeline) transformModule = mod;
-      } catch (e2) {
-        throw new Error('Transformers.js failed to load from CDN');
-      }
-    }
-
-    if (!transformModule) throw new Error('Transformers.js failed to load');
-    if (!mutedTransformersWarnings) {
-      try {
-        transformModule.env && (transformModule.env.allowLocalModels = false);
-        transformModule.env && (transformModule.env.useBrowserCache = true);
-        if (transformModule.env && transformModule.env.backends && transformModule.env.backends.onnx) {
-          transformModule.env.backends.onnx.wasm && (transformModule.env.backends.onnx.wasm.proxy = false);
-          if (typeof WebAssembly !== 'undefined' && WebAssembly.Memory) {
-            try {
-              const sizeMb = (state.config && state.config.modelSettings && state.config.modelSettings.memory && state.config.modelSettings.memory.wasmInitialMb) || 64;
-              transformModule.env.backends.onnx.wasm.wasmMemory = new WebAssembly.Memory({ initial: sizeMb, maximum: 8192 });
-            } catch (_) {}
-          }
-        }
-      } catch (_) {}
-      mutedTransformersWarnings = true;
-    }
-    return transformModule;
-  })();
-
-  return loadPromise;
-}
-
-function resolveStage(keyOrRoleOrTask) {
-  const k = ROLE_TO_STAGE[keyOrRoleOrTask] || TASK_TO_STAGE[keyOrRoleOrTask] || keyOrRoleOrTask;
-  return PIPELINE_STAGES[k] || null;
-}
-
-const modelStatus = {
-  loading: false,
-  loaded: null,
-  error: null,
-  stage: null
-};
-
-export async function updateModelStatus(status) {
-  const current = String(status || '').toLowerCase();
-  if (current.includes('load') || current.includes('swap')) {
-    if (current.includes('ready') || current.includes('done')) {
-      modelStatus.loading = false;
-      modelStatus.error = null;
-    } else if (current.includes('error') || current.includes('fail')) {
-      modelStatus.loading = false;
-      modelStatus.error = current;
-    } else {
-      modelStatus.loading = true;
-      modelStatus.error = null;
-    }
-  } else if (current.includes('ready')) {
-    modelStatus.loading = false;
-    modelStatus.error = null;
-  } else if (current.includes('error')) {
-    modelStatus.error = current;
-  }
-
-  if (isBrowser) {
-    const statusEl = document.getElementById('modelStatus');
-    const stageEl = document.getElementById('pipelineStage');
-    if (statusEl) {
-      if (modelStatus.error) {
-        statusEl.textContent = 'Model Status: Error loading model';
-        statusEl.className = 'badge bg-danger';
-      } else if (modelStatus.loading) {
-        statusEl.textContent = 'Model Status: Loading...';
-        statusEl.className = 'badge bg-warning text-dark';
-      } else {
-        statusEl.textContent = `Model Status: ${modelStatus.loaded ? 'Ready (' + modelStatus.loaded + ')' : 'Ready'}`;
-        statusEl.className = 'badge bg-success';
-      }
-    }
-    if (stageEl) {
-      stageEl.textContent = modelStatus.stage ? `Stage: ${modelStatus.stage}` : '';
-    }
-  }
-
-  return modelStatus;
-}
-
-async function disposeActive() {
-  const p = active.pipe;
-  if (!p) return;
-  active.key = null;
-  active.modelId = null;
-  active.pipe = null;
-  try {
-    if (typeof p.dispose === 'function') await p.dispose();
-  } catch (_) {}
-  try {
-    if (p.model && typeof p.model.dispose === 'function') await p.model.dispose();
-  } catch (_) {}
-  pipelineStatus().status = 'idle';
-  try { await updateModelStatus('Model Status: Ready'); } catch (_) {}
-}
-
-async function buildPipeline(stageDef, modelId) {
-  const status = pipelineStatus();
-  status.status = 'loading';
-  status.stage = stageDef.key;
-  status.model = modelId;
-  status.loads++;
-  modelStatus.stage = stageDef.key;
-  modelStatus.loaded = modelId;
-  await updateModelStatus('Model Status: Loading...');
-
-  const transformers = await getTransformers();
-  let pipeline;
-  try {
-    pipeline = transformers.pipeline;
-  } catch (_) {
-    pipeline = transformers.default ? transformers.default.pipeline : null;
-  }
-  if (!pipeline) throw new Error('Transformers pipeline API not found');
-
-  const ms = (state.config && state.config.modelSettings) || {};
-  const progressEl = isBrowser ? document.getElementById('modelProgress') : null;
-  const dtype = ms.dtype || 'q8';
-  const opts = { dtype };
-  const device = 'cpu';
-
-  const pipe = await pipeline(stageDef.task, modelId, {
-    ...opts,
-    device,
-    progress_callback: (p) => {
-      if (p && p.status === 'progress' && p.progress) {
-        if (progressEl) progressEl.style.width = `${p.progress}%`;
-      }
-    }
-  });
-
-  active.key = stageDef.key;
-  active.modelId = modelId;
-  active.pipe = pipe;
-
-  if (progressEl) progressEl.style.width = '0%';
-  modelStatus.loaded = modelId;
-  modelStatus.stage = stageDef.key;
-  modelStatus.loading = false;
-  modelStatus.error = null;
-  status.status = 'ready';
-  await updateModelStatus('Model Status: Ready');
-
-  if (stageDef.role === 'embedder') {
-    populateModelSelects();
-    renderConfigEditor();
-  }
-  return pipe;
-}
+import {
+  ModelError,
+  formatModelError,
+  PIPELINE_STAGES,
+  ROLE_TO_STAGE,
+  TASK_TO_STAGE,
+  resolveStage
+} from './ai/backend.js';
+import {
+  setTransformersHooks,
+  getTransformers,
+  getStatus,
+  getModelIdForStage,
+  loadStage,
+  unloadStage,
+  unloadAll,
+  isStageLoaded,
+  inferStage,
+  preloadModels,
+  forcePreload
+} from './ai/transformers-backend.js';
+import { resolveBackendForStage } from './ai/routing.js';
+import { detectDevice, recommendModelSet } from '../core/device.js';
 
 /**
- * Load a pipeline for a stage, guaranteeing at most one model resident.
- * Returns the pipeline and RETAINS it until the next stage loads.
+ * Resolve the argument to a DeviceProfile. Accepts an injected probe bag
+ * (an object whose formFactor key is a function) or an existing profile
+ * (object carrying a string tier); otherwise detects from browser probes.
  */
-export function loadStage(key, modelOverride) {
-  const stageDef = resolveStage(key);
-  if (!stageDef) return Promise.reject(new Error(`Unknown pipeline stage "${key}"`));
-  const modelId = (typeof modelOverride === 'string' && modelOverride)
-    ? modelOverride
-    : (modelOverride && typeof modelOverride === 'object' && modelOverride.model) || stageModel(stageDef);
-
-  if (active.key === stageDef.key && active.modelId === modelId && active.pipe) {
-    return Promise.resolve(active.pipe);
-  }
-
-  const op = chain.then(async () => {
-    if (active.key === stageDef.key && active.modelId === modelId && active.pipe) return active.pipe;
-    await disposeActive();
-    try {
-      return await buildPipeline(stageDef, modelId);
-    } catch (err) {
-      pipelineStatus().status = 'idle';
-      pipelineStatus().stage = null;
-      pipelineStatus().model = null;
-      modelStatus.loading = false;
-      modelStatus.error = err && err.message ? String(err.message) : 'stage unavailable';
-      await updateModelStatus('Model Status: Error').catch(() => {});
-      throw err;
-    }
-  });
-  chain = op.catch(() => {});
-  return op;
+function resolveDeviceProfile(input) {
+  if (input && typeof input === 'object' && typeof input.formFactor === 'function') return detectDevice(input);
+  if (input && typeof input === 'object' && typeof input.tier === 'string') return input;
+  return detectDevice();
 }
+
+// ── Re-exported scheduler / contracts (unchanged public surface) ─────────────
+export { ModelError, formatModelError, PIPELINE_STAGES, resolveStage };
+export { setTransformersHooks, getTransformers, loadStage, unloadStage, unloadAll, isStageLoaded, inferStage, preloadModels, forcePreload };
 
 /**
- * Load a stage, run `fn(pipeline)`, then dispose it (unless retain:true).
- * This is the "one model at a time" entry point used by the pipeline.
+ * Pipeline status snapshot — same shape as before the backend split so
+ * callers (ui.js, test.js) keep reading status/currentStage/currentModel/
+ * model/disabled.
  */
-export async function inferStage(key, fn, opts = {}) {
-  const pipe = await loadStage(key, opts.model);
-  try {
-    return await fn(pipe);
-  } finally {
-    if (!opts.retain) {
-      await disposeActive();
-    }
-  }
-}
-
-export function unloadStage(key) {
-  if (active.key === key) return disposeActive();
-  return Promise.resolve();
-}
-
-export async function unloadAll() {
-  await disposeActive();
-  chain = Promise.resolve();
-}
-
-export function isStageLoaded(key) {
-  const stageDef = resolveStage(key);
-  return !!(stageDef && active.key === stageDef.key && active.pipe);
-}
-
 export function getPipelineStatus() {
-  return { status: pipelineStatus().status, currentStage: active.key, currentModel: active.modelId, model: modelStatus };
+  return getStatus();
 }
 
 /**
- * Compatibility loader used by existing data flows (embeddings, generator
- * fallback). Returns the pipeline, retained in the single slot until the next
- * stage loads. Returns null instead of throwing when models are unavailable.
+ * Resolve the stage + model id for an arbitrary model id string (direct import
+ * by model name). Checks configured availableModels, then configured stage
+ * assignments, then id heuristics. Always falls back to null (never guesses a
+ * fake placement).
  */
-export async function getModel(type, modelName, modelRole) {
+export function resolveModelName(modelId) {
+  const id = String(modelId || '').trim();
+  if (!id) return null;
+  const ms = state.config && state.config.modelSettings;
+
+  const avail = (ms && Array.isArray(ms.availableModels) ? ms.availableModels : [])
+    .find(m => m && (m.id === id || m.name === id));
+  if (avail && avail.type) {
+    const mapped = ROLE_TO_STAGE[avail.type] || TASK_TO_STAGE[avail.type] || avail.type;
+    const st = resolveStage(mapped);
+    if (st) return { stage: st, modelId: avail.id || id };
+  }
+
+  for (const st of Object.values(PIPELINE_STAGES)) {
+    if (getModelIdForStage(st) === id) return { stage: st, modelId: id };
+  }
+
+  const lower = id.toLowerCase();
+  if (/mini.?lm|bge-|mpnet|e5-|sentence|gte-/.test(lower)) return { stage: PIPELINE_STAGES.encoder, modelId: id };
+  if (/nli|mnli|mobilebert|bart-large-mnli|zero-shot/.test(lower)) return { stage: PIPELINE_STAGES.intent, modelId: id };
+  if (/ner|token-class|bert-base/.test(lower)) return { stage: PIPELINE_STAGES.tagger, modelId: id };
+  if (/t5|flan|gpt|llama|phi|gemma|mistral|bloom|qwen|bart-cnn/.test(lower)) return { stage: PIPELINE_STAGES.dialog, modelId: id };
+  return null;
+}
+
+// ── Model catalog (UI + direct import) ────────────────────────────────────────
+/**
+ * The configured model catalog (modelSettings.availableModels), normalized to
+ * non-empty entries. The UI selects and the Models tab render from this list;
+ * `applyStageModel()` picks a catalog entry for a stage.
+ */
+export function getModelCatalog() {
+  const ms = state.config && state.config.modelSettings;
+  const list = ms && Array.isArray(ms.availableModels) ? ms.availableModels : [];
+  return list.filter(m => m && typeof m.id === 'string' && m.id);
+}
+
+export function getModelMeta(modelId) {
+  return getModelCatalog().find(m => m.id === modelId) || null;
+}
+
+/**
+ * All selectable models for a pipeline stage: the catalog narrowed to the
+ * stage's role/type, with the currently-configured model guaranteed present
+ * (flagged `current`) even if it is not in the catalog (e.g. a custom id).
+ */
+export function getModelsForStage(stageKeyOrDef) {
+  const stageDef = resolveStage(stageKeyOrDef);
+  if (!stageDef) return [];
+  const type = stageDef.role;
+  const currentId = getModelIdForStage(stageDef);
+  const out = [];
+  const seen = new Set();
+  for (const m of getModelCatalog()) {
+    if (m.type !== type && m.type !== stageDef.key && m.type !== stageDef.task) continue;
+    if (seen.has(m.id)) continue;
+    seen.add(m.id);
+    out.push({ ...m, stage: stageDef.key });
+  }
+  if (currentId && !seen.has(currentId)) {
+    out.unshift({ id: currentId, name: String(currentId).split('/').pop(), type, stage: stageDef.key, description: 'Currently configured model (custom id)', sizeMb: null });
+  }
+  for (const m of out) m.current = m.id === currentId;
+  return out;
+}
+
+/**
+ * Full per-stage options snapshot for the Models tab: key, task, role, the
+ * configured model, whether the stage is resident, and the selectable catalog.
+ */
+export function getStageOptions() {
+  const opts = [];
+  for (const stage of Object.values(PIPELINE_STAGES)) {
+    opts.push({
+      key: stage.key,
+      role: stage.role,
+      task: stage.task,
+      label: stage.key[0].toUpperCase() + stage.key.slice(1),
+      model: getModelIdForStage(stage),
+      loaded: isStageLoaded(stage.key),
+      options: getModelsForStage(stage.key)
+    });
+  }
+  return opts;
+}
+
+/**
+ * Device-aware recommendations: detect the client device (or use an injected
+ * profile), then map each pipeline stage to the best-fit catalog model.
+ * Returns model ids that exist in the catalog, falling back to the current
+ * stage model if a recommended id is not available.
+ */
+export function getDeviceRecommendations(profileOrProbes, opts = {}) {
+  const profile = resolveDeviceProfile(profileOrProbes);
+  const catalog = getModelCatalog();
+  const plan = recommendModelSet(profile, catalog);
+  const recs = plan.stages || {};
+  const stages = [];
+
+  for (const stageOpt of getStageOptions()) {
+    const key = stageOpt.key;
+    const rec = recs[key] || {};
+    const meta = getModelMeta(rec.model);
+    const fallbackId = stageOpt.model;
+    const pick = meta ? rec.model : (rec.model && getModelMeta(rec.model) ? rec.model : fallbackId);
+    const pickMeta = getModelMeta(pick);
+    stages.push(Object.freeze({
+      key,
+      stage: stageOpt.label,
+      recommended: pick,
+      name: pickMeta ? pickMeta.name : pick,
+      sizeMb: pickMeta ? pickMeta.sizeMb : null,
+      reason: meta && meta.id === pick ? rec.reason : (pickMeta ? `Falling back to ${pickMeta.name} (catalog lookup)` : 'No catalog match — keeping current model'),
+      current: stageOpt.model,
+      loaded: stageOpt.loaded
+    }));
+  }
+
+  return Object.freeze({
+    profile: Object.freeze({ ...profile }),
+    tier: plan.tier,
+    dtype: plan.dtype,
+    notes: plan.notes,
+    stages: Object.freeze(stages)
+  });
+}
+
+/**
+ * Build a modelSettings object reflecting the recommended setup for a device
+ * profile so it can be persisted via ConfigAPI.updateConfig. Does not mutate
+ * state. Returns null when configuration has not loaded yet.
+ */
+export function buildRecommendedModelSettings(profileOrProbes) {
+  const ms = state.config && state.config.modelSettings;
+  if (!ms) return null;
+  const profile = resolveDeviceProfile(profileOrProbes);
+  const catalog = getModelCatalog();
+  const plan = recommendModelSet(profile, catalog);
+  const stageMap = new Map();
+  const stages = (ms.pipeline && Array.isArray(ms.pipeline.stages)) ? ms.pipeline.stages.slice() : [];
+  for (const st of stages) { if (st && st.key) stageMap.set(st.key, st); }
+
+  for (const stageDef of Object.values(PIPELINE_STAGES)) {
+    const rec = (plan.stages || {})[stageDef.key] || {};
+    const meta = getModelMeta(rec.model);
+    const model = meta ? rec.model : ((stageMap.get(stageDef.key) || {}).model || stageDef.default);
+    if (stageMap.has(stageDef.key)) {
+      const idx = stages.findIndex(s => s && s.key === stageDef.key);
+      stages[idx] = { ...stages[idx], model };
+    } else {
+      stages.push({ key: stageDef.key, task: stageDef.task, role: stageDef.role, model });
+    }
+  }
+
+  const out = {
+    ...ms,
+    dtype: plan.dtype || ms.dtype,
+    embedder: (plan.stages || {}).encoder && (plan.stages.encoder.model || ms.embedder),
+    classifier: (plan.stages || {}).intent && (plan.stages.intent.model || ms.classifier),
+    generator: (plan.stages || {}).dialog && (plan.stages.dialog.model || ms.generator),
+    pipeline: {
+      ...(ms.pipeline || {}),
+      stages
+    },
+    availableModels: catalog
+  };
+  // keep top-level helpers equal to their stage assignments
+  const enc = stages.find(s => s && s.key === 'encoder');
+  const int = stages.find(s => s && s.key === 'intent');
+  const diag = stages.find(s => s && s.key === 'dialog');
+  if (enc) out.embedder = enc.model;
+  if (int) out.classifier = int.model;
+  if (diag) out.generator = diag.model;
+  return out;
+}
+
+/**
+ * Assign a model to a pipeline stage (in-memory only — the caller persists via
+ * ConfigAPI.updateConfig). Keeps the top-level embedder/classifier/generator
+ * helpers in sync with pipeline.stages so every code path reads one answer.
+ * Rejects with a typed error when the stage or model is not usable.
+ */
+export function applyStageModel(stageKey, modelId) {
+  const stageDef = resolveStage(stageKey);
+  if (!stageDef) {
+    throw new ModelError('E_UNKNOWN_STAGE', stageKey, `Unknown pipeline stage "${stageKey}".`, 'Use one of: encoder, intent, tagger, dialog.');
+  }
+  const id = typeof modelId === 'string' && modelId.trim() ? modelId.trim() : null;
+  if (!id) {
+    throw new ModelError('E_LOAD_MODEL', stageDef.key, 'A model id is required.', 'Pick a model from the catalog or type a Hugging Face model id.');
+  }
+  if (!state.config || !state.config.modelSettings) {
+    throw new ModelError('E_NO_CONFIG', stageDef.key, 'Configuration not loaded — cannot assign a model.', 'Call init() / loadConfiguration() first.');
+  }
+  const ms = state.config.modelSettings;
+  if (!ms.pipeline || !Array.isArray(ms.pipeline.stages)) ms.pipeline = { policy: 'swap', threshold: 0.35, memory: { maxSimultaneous: 1, wasmInitialMb: 64 }, stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: s.default })) };
+  const stageCfg = ms.pipeline.stages.find(s => s && s.key === stageDef.key);
+  if (stageCfg) stageCfg.model = id;
+  else ms.pipeline.stages.push({ key: stageDef.key, task: stageDef.task, role: stageDef.role, model: id });
+  if (stageDef.role === 'embedder') ms.embedder = id;
+  if (stageDef.role === 'classifier') ms.classifier = id;
+  if (stageDef.role === 'generator') ms.generator = id;
+  return { stage: stageDef.key, model: id };
+}
+
+/**
+ * Public model loader — the "direct import by model name" API.
+ *
+ *   await getModel('Xenova/all-MiniLM-L6-v2')  // by model id (resolved)
+ *   await getModel('embedder')                 // by stage key / role / task
+ *   await getModel('feature-extraction', configuredModelId, 'embedder')  // legacy 3-arg form
+ *
+ * Resolves to the live pipeline (retained in the swap slot) or rejects with a
+ * `ModelError` carrying `code`, `stage`, `model`, and `fix`.
+ */
+export async function getModel(typeOrName, modelName, modelRole) {
   const config = state.config;
   if (!config || !config.modelSettings) {
-    throw new Error('Configuration not loaded');
+    throw new ModelError('E_NO_CONFIG', null, 'Configuration not loaded — cannot resolve models.', 'Call init() / loadConfiguration() first.');
   }
-  const stageDef = resolveStage(modelRole || type);
-  if (!stageDef) throw new Error(`No pipeline stage for "${type}/${modelRole}"`);
-  try {
-    return await loadStage(stageDef.key, modelName);
-  } catch (err) {
-    console.warn(`[models] Stage "${stageDef.key}" unavailable:`, err.message);
-    return null;
+  if (typeof typeOrName !== 'string' || !typeOrName.trim()) {
+    throw new ModelError('E_UNKNOWN_STAGE', null, 'getModel requires a model id or stage key.', 'Pass a Hugging Face model id (e.g. "Xenova/all-MiniLM-L6-v2") or a stage key (encoder/intent/tagger/dialog).');
   }
+
+  let stageKey = null;
+  let mid = null;
+
+  if (modelName || modelRole) {
+    const stage = resolveStage(modelRole || typeOrName);
+    stageKey = stage && stage.key;
+    mid = modelName || (stage && getModelIdForStage(stage));
+  } else {
+    const byName = resolveModelName(typeOrName);
+    if (byName) {
+      stageKey = byName.stage.key;
+      mid = byName.modelId;
+    } else {
+      const stage = resolveStage(typeOrName);
+      if (stage) {
+        stageKey = stage.key;
+        mid = getModelIdForStage(stage);
+      }
+    }
+  }
+
+  if (!stageKey || !mid) {
+    throw new ModelError('E_UNKNOWN_STAGE', null, `No pipeline stage resolves for "${typeOrName}".`, 'Use a known HF model id, a stage key, or an entry listed in modelSettings.availableModels.');
+  }
+
+  return loadStage(stageKey, mid);
 }
 
+/**
+ * Default modelSettings (used by "Reset to defaults"). Keeps the current
+ * availableModels catalog so newly-added models survive a reset, and rebuilds
+ * the small stage list from the stage registry defaults.
+ */
+export function defaultModelSettings() {
+  const ms = state.config && state.config.modelSettings;
+  const catalog = (ms && Array.isArray(ms.availableModels)) ? ms.availableModels : [];
+  return {
+    dtype: 'q8',
+    preloadOnOpen: !!ms.preloadOnOpen,
+    embedder: PIPELINE_STAGES.encoder.default,
+    classifier: PIPELINE_STAGES.intent.default,
+    generator: PIPELINE_STAGES.dialog.default,
+    pipeline: {
+      policy: 'swap',
+      threshold: 0.35,
+      memory: { maxSimultaneous: 1, wasmInitialMb: 64 },
+      stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: s.default }))
+    },
+    availableModels: catalog
+  };
+}
+
+/**
+ * Enrichment: compute/store an embedding for a record. Best-effort — returns
+ * null when the embedder is unavailable so data operations never block on the
+ * model. Records without embeddings fall back to keyword search (honest).
+ */
 export async function computeEmbedding(schemaName, data, stateInstance = state) {
   try {
-    const biz = getActiveBusiness(stateInstance);
+    const biz = (stateInstance && getActiveBusiness) ? getActiveBusiness(stateInstance) : null;
     const schema = biz && biz.schemas ? biz.schemas[schemaName] : null;
     if (!schema) return null;
     const fields = schema.vectorize || Object.keys(schema.fields || {});
     const text = fields.map(f => data[f]).filter(Boolean).join(' ');
     if (!text) return null;
-    const embedder = await getModel(
-      'feature-extraction',
-      stateInstance.config && stateInstance.config.modelSettings ? stateInstance.config.modelSettings.embedder : undefined,
-      'embedder'
-    );
-    if (!embedder) return null;
+    const ms = stateInstance.config && stateInstance.config.modelSettings;
+    const embedder = await getModel((ms && ms.embedder) || PIPELINE_STAGES.encoder.default);
     const out = await embedder(text, { pooling: 'mean', normalize: true });
     return Array.from(out.data);
   } catch (e) {
@@ -349,15 +372,67 @@ export async function computeEmbedding(schemaName, data, stateInstance = state) 
   }
 }
 
+/**
+ * Enrichment: embed free text. Best-effort — null when the embedder is
+ * unavailable (callers fall back to deterministic keyword logic).
+ */
 export async function embedText(text, modelOverride) {
   if (!text) return null;
-  const embedder = await getModel(
-    'feature-extraction',
-    modelOverride ||
-      (state.config && state.config.modelSettings ? state.config.modelSettings.embedder : undefined),
-    'embedder'
-  );
-  if (!embedder) return null;
-  const out = await embedder(String(text), { pooling: 'mean', normalize: true });
-  return Array.from(out.data);
+
+  // Try the configured remote embedder backend first (llamacpp / ollama)
+  try {
+    const backend = resolveBackendForStage('embedder');
+    if (backend && backend.id !== 'transformers' && typeof backend.embed === 'function') {
+      const vec = await backend.embed(String(text), modelOverride);
+      if (vec) return Array.from(vec);
+    }
+  } catch (_) { /* fall through to on-device */ }
+
+  // On-device Transformers.js fallback
+  try {
+    const ms = state.config && state.config.modelSettings;
+    const embedder = await getModel(modelOverride || (ms && ms.embedder) || PIPELINE_STAGES.encoder.default);
+    const out = await embedder(String(text), { pooling: 'mean', normalize: true });
+    return Array.from(out.data);
+  } catch (err) {
+    if (!(err instanceof ModelError && err.code === 'E_DISABLED')) {
+      console.warn('[models] embeddings unavailable:', formatModelError(err));
+    }
+    return null;
+  }
+}
+
+// ── Browser-only wiring: Transformers provider ↔ Models-tab UI ───────────────
+// The scheduler used to poke the DOM directly; it now reports through hooks and
+// this coordinator forwards them to the exact same elements/behaviour.
+if (isBrowser) {
+  setTransformersHooks({
+    onStatus(s) {
+      const statusEl = document.getElementById('modelStatus');
+      const stageEl = document.getElementById('pipelineStage');
+      if (statusEl) {
+        if (s.error) {
+          statusEl.textContent = 'Model Status: Error loading model';
+          statusEl.className = 'badge bg-danger';
+        } else if (s.loading) {
+          statusEl.textContent = 'Model Status: Loading...';
+          statusEl.className = 'badge bg-warning text-dark';
+        } else {
+          statusEl.textContent = `Model Status: ${s.loaded ? 'Ready (' + s.loaded + ')' : 'Ready'}`;
+          statusEl.className = 'badge bg-success';
+        }
+      }
+      if (stageEl) {
+        stageEl.textContent = s.stage ? `Stage: ${s.stage}` : '';
+      }
+    },
+    onProgress(pct) {
+      const progressEl = document.getElementById('modelProgress');
+      if (progressEl) progressEl.style.width = `${pct}%`;
+    },
+    onEmbedderReady() {
+      populateModelSelects();
+      renderConfigEditor();
+    }
+  });
 }

@@ -18,7 +18,26 @@ export const CONFIG_SCHEMA = {
         subtitle: { type: 'string' },
         version: { type: 'string' },
         defaultCharacter: { type: 'string' },
-        defaultBusiness: { type: 'string' }
+        defaultBusiness: { type: 'string' },
+        ai: {
+          type: 'object',
+          properties: {
+            backends: {
+              type: 'object',
+              properties: {
+                llamacpp: { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } } },
+                ollama:   { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } } }
+              }
+            },
+            routing: {
+              type: 'object',
+              properties: {
+                dialog:   { type: 'string' },
+                embedder: { type: 'string' }
+              }
+            }
+          }
+        }
       }
     },
     characters: {
@@ -70,6 +89,18 @@ export function validateConfig(config) {
   if (!config.app.ui) config.app.ui = { sidebar: { minWidth: 200, maxWidth: 500 }, chartColors: [] };
   if (!config.app.google) config.app.google = { clientId: '', scopes: [] };
 
+  if (!config.app.ai) config.app.ai = {};
+  if (!config.app.ai.backends) config.app.ai.backends = {};
+  if (!config.app.ai.backends.llamacpp) config.app.ai.backends.llamacpp = { url: 'http://localhost:8080/v1', enabled: false };
+  if (!config.app.ai.backends.llamacpp.url) config.app.ai.backends.llamacpp.url = 'http://localhost:8080/v1';
+  if (typeof config.app.ai.backends.llamacpp.enabled !== 'boolean') config.app.ai.backends.llamacpp.enabled = false;
+  if (!config.app.ai.backends.ollama) config.app.ai.backends.ollama = { url: 'http://localhost:11434', enabled: false };
+  if (!config.app.ai.backends.ollama.url) config.app.ai.backends.ollama.url = 'http://localhost:11434';
+  if (typeof config.app.ai.backends.ollama.enabled !== 'boolean') config.app.ai.backends.ollama.enabled = false;
+  if (!config.app.ai.routing) config.app.ai.routing = {};
+  if (typeof config.app.ai.routing.dialog !== 'string') config.app.ai.routing.dialog = 'auto';
+  if (typeof config.app.ai.routing.embedder !== 'string') config.app.ai.routing.embedder = 'auto';
+
   if (!Array.isArray(config.businesses) || config.businesses.length === 0) {
     throw new Error('Config must contain at least one business definition');
   }
@@ -114,6 +145,139 @@ export function validateConfig(config) {
   return true;
 }
 
+// ── Strict secrets / model audit ─────────────────────────────────────────────
+const PLACEHOLDER_RE = /^(YOUR_|CHANGE_ME|CHANGEME|INSERT_|REPLACE_|TODO|TOKEN_|API_KEY|ILLEGAL_)/i;
+
+// Configuration subtrees that must never be handed to the AI tools (get_config /
+// update_config). They hold OAuth and credential material — environment-injected,
+// not model-editable.
+const PROTECTED_PATHS = ['app.google'];
+const SECRET_KEY_RE = /(clientid|secret|token|api[_ ]?key|password|private)/i;
+
+export function isPlaceholder(value) {
+  const s = String(value === null || value === undefined ? '' : value).trim();
+  if (!s) return false;
+  if (PLACEHOLDER_RE.test(s)) return true;
+  if (/^<[a-z0-9_ -]+>$/i.test(s)) return true;
+  return false;
+}
+
+/**
+ * Audit a config for the things that must never ship or silently fail:
+ * structural validity, real model ids, and real OAuth secrets. Returns an
+ * array of `{ path, code, message, fix }` issues (empty when all good).
+ * Issue codes: E_CONFIG, E_MODEL_MISSING, E_SECRET_MISSING, E_SECRET_PLACEHOLDER.
+ */
+export function collectConfigIssues(config) {
+  const issues = [];
+
+  if (!config || typeof config !== 'object' || Array.isArray(config)) {
+    issues.push({ path: '$', code: 'E_CONFIG', message: 'Configuration must be a JSON object.', fix: 'Provide a valid config.json, or inject one via AIWS_CONFIG_JSON / AIWS_CONFIG_FILE.' });
+    return issues;
+  }
+
+  try {
+    validateConfig(config);
+  } catch (err) {
+    issues.push({ path: '$', code: 'E_CONFIG', message: err.message, fix: 'Fix the reported field, or inject a valid configuration at runtime.' });
+  }
+
+  const ms = config.modelSettings;
+  if (!ms || typeof ms !== 'object') {
+    issues.push({ path: 'modelSettings', code: 'E_MODEL_MISSING', message: 'modelSettings is missing — no AI models configured.', fix: 'Add modelSettings.embedder/classifier/generator and modelSettings.pipeline.stages with real model ids.' });
+  } else {
+    for (const key of ['embedder', 'classifier', 'generator']) {
+      const v = ms[key];
+      if (!v || !String(v).trim()) {
+        issues.push({ path: `modelSettings.${key}`, code: 'E_MODEL_MISSING', message: `No model id configured for "${key}".`, fix: `Set modelSettings.${key} to a Hugging Face model id (e.g. Xenova/all-MiniLM-L6-v2).` });
+      } else if (isPlaceholder(v)) {
+        issues.push({ path: `modelSettings.${key}`, code: 'E_MODEL_MISSING', message: `"${key}" model id is a placeholder, not a real model.`, fix: 'Replace it with a real Hugging Face model id.' });
+      }
+    }
+    const stages = ms.pipeline && Array.isArray(ms.pipeline.stages) ? ms.pipeline.stages : null;
+    if (!stages || !stages.length) {
+      issues.push({ path: 'modelSettings.pipeline.stages', code: 'E_MODEL_MISSING', message: 'No pipeline stages defined.', fix: 'List encoder/intent/tagger/dialog stages with real model ids.' });
+    } else {
+      for (let i = 0; i < stages.length; i++) {
+        const st = stages[i];
+        if (!st || !st.key) {
+          issues.push({ path: `modelSettings.pipeline.stages[${i}]`, code: 'E_MODEL_MISSING', message: 'A pipeline stage is missing its "key".', fix: 'Each stage needs a key (encoder/intent/tagger/dialog) and a model id.' });
+        } else if (st.model && isPlaceholder(st.model)) {
+          issues.push({ path: `modelSettings.pipeline.stages[${i}].model`, code: 'E_MODEL_MISSING', message: `Stage "${st.key}" uses a placeholder model id.`, fix: 'Set a real Hugging Face model id for this stage.' });
+        }
+      }
+    }
+  }
+
+  const google = config.app && config.app.google;
+  const clientId = google ? google.clientId : null;
+  if (!clientId || !String(clientId).trim()) {
+    issues.push({ path: 'app.google.clientId', code: 'E_SECRET_MISSING', message: 'Google OAuth client id is not configured.', fix: 'Set GOOGLE_CLIENT_ID (env) or app.google.clientId so Drive/Sheets/Calendar can connect.' });
+  } else if (isPlaceholder(clientId)) {
+    issues.push({ path: 'app.google.clientId', code: 'E_SECRET_PLACEHOLDER', message: `Google OAuth client id looks like a placeholder ("${String(clientId).slice(0, 32)}...").`, fix: 'Provide a real OAuth client id via GOOGLE_CLIENT_ID (env) or app.google.clientId.' });
+  }
+
+  return issues;
+}
+
+// ── Runtime overrides (secrets & per-deployment config, injected, not committed) ──
+function isPlainObject(v) {
+  return v !== null && typeof v === 'object' && !Array.isArray(v);
+}
+
+function deepMerge(target, source) {
+  for (const key of Object.keys(source || {})) {
+    const src = source[key];
+    const tgt = target[key];
+    if (isPlainObject(src) && isPlainObject(tgt)) {
+      deepMerge(tgt, src);
+    } else {
+      target[key] = src; // arrays and scalars are replaced outright, never merged
+    }
+  }
+  return target;
+}
+
+/**
+ * Apply server/injected overrides on top of the shipped config, deepest last:
+ *   window.__APP_CONFIG__  (browser: config JSON injected into index.html)
+ *   AIWS_CONFIG_JSON       (Node env: raw JSON string)
+ *   AIWS_CONFIG_FILE       (Node env: path to a JSON config file)
+ *   GOOGLE_CLIENT_ID       (Node env: plain string, always wins for OAuth)
+ * Returns the merged config object (mutates `config` in place).
+ */
+export async function applyRuntimeOverrides(config) {
+  const cfg = isPlainObject(config) ? config : {};
+  const sources = [];
+
+  if (typeof window !== 'undefined' && isPlainObject(window.__APP_CONFIG__)) {
+    sources.push(window.__APP_CONFIG__);
+  }
+
+  const env = (typeof process !== 'undefined' && process.env) || {};
+  if (env.AIWS_CONFIG_JSON) {
+    try { sources.push(JSON.parse(env.AIWS_CONFIG_JSON)); } catch (_) {}
+  }
+  if (env.AIWS_CONFIG_FILE) {
+    try {
+      const { readFile } = await import('node:fs/promises');
+      sources.push(JSON.parse(await readFile(env.AIWS_CONFIG_FILE, 'utf8')));
+    } catch (_) {}
+  }
+
+  for (const src of sources) {
+    if (isPlainObject(src)) deepMerge(cfg, src);
+  }
+
+  if (env.GOOGLE_CLIENT_ID) {
+    if (!isPlainObject(cfg.app)) cfg.app = {};
+    if (!isPlainObject(cfg.app.google)) cfg.app.google = {};
+    cfg.app.google.clientId = env.GOOGLE_CLIENT_ID;
+  }
+
+  return cfg;
+}
+
 export class ConfigAPI {
   constructor(db, stateInstance) {
     this.db = db;
@@ -141,21 +305,45 @@ export class ConfigAPI {
     return biz?.schemas || {};
   }
 
+  isProtectedPath(keys) {
+    return PROTECTED_PATHS.some(p => {
+      const pk = p.split('.');
+      return pk.every((k, i) => keys[i] === k);
+    });
+  }
+
+  // Deep-copy a value, masking anything that smells like a secret so AI-facing
+  // reads (get_config) never leak OAuth/credential material into model prompts.
+  redactValue(value, key = '') {
+    if (SECRET_KEY_RE.test(key)) return '[redacted]';
+    if (Array.isArray(value)) return value.map((v, i) => this.redactValue(v, String(i)));
+    if (value && typeof value === 'object') {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) out[k] = this.redactValue(v, k);
+      return out;
+    }
+    return value;
+  }
+
   async getConfig(path) {
     if (!this.state.config) return null;
-    if (!path) return this.state.config;
+    if (!path) return this.redactValue(this.state.config);
     const keys = path.split('.');
+    if (this.isProtectedPath(keys)) return { redacted: true };
     let target = this.state.config;
     for (const key of keys) {
       if (target === undefined || target === null || !(key in target)) return undefined;
       target = target[key];
     }
-    return target;
+    return this.redactValue(target, keys[keys.length - 1]);
   }
 
   async updateConfig(path, value) {
     if (!path) throw new Error('Path must be specified');
     const keys = path.split('.');
+    if (this.isProtectedPath(keys)) {
+      throw new Error(`Configuration path "${path}" is protected and cannot be modified via update_config`);
+    }
     let target = this.state.config;
 
     for (let i = 0; i < keys.length - 1; i++) {
@@ -268,6 +456,7 @@ export class ConfigAPI {
     if (!biz) throw new Error(`Business "${businessId}" not found`);
     if (!biz.schemas) biz.schemas = {};
     const norm = (schemaName || '').toLowerCase().trim();
+    if (!norm) throw new Error('Schema name must be specified');
     if (biz.schemas[norm]) {
       throw new Error(`Schema "${norm}" already exists in business "${businessId}"`);
     }
@@ -276,6 +465,74 @@ export class ConfigAPI {
     await this.logConfigChange('add_schema', `${businessId}.${norm}`, null, schemaDef);
     await this.db.setKV('app_config', this.state.config);
     return { success: true, schemaName: norm };
+  }
+
+  async updateSchema(businessId, schemaName, schemaDef) {
+    const biz = this.state.config.businesses.find(b => b.id === businessId);
+    if (!biz) throw new Error(`Business "${businessId}" not found`);
+    if (!biz.schemas) biz.schemas = {};
+    const norm = (schemaName || '').toLowerCase().trim();
+    if (!biz.schemas[norm]) {
+      throw new Error(`Schema "${norm}" not found in business "${businessId}"`);
+    }
+    const oldDef = biz.schemas[norm];
+    biz.schemas[norm] = { ...oldDef, ...schemaDef };
+
+    await this.logConfigChange('update_schema', `${businessId}.${norm}`, oldDef, biz.schemas[norm]);
+    await this.db.setKV('app_config', this.state.config);
+    return { success: true, schemaName: norm };
+  }
+
+  async deleteSchema(businessId, schemaName) {
+    const biz = this.state.config.businesses.find(b => b.id === businessId);
+    if (!biz) throw new Error(`Business "${businessId}" not found`);
+    if (!biz.schemas) biz.schemas = {};
+    const norm = (schemaName || '').toLowerCase().trim();
+    if (!biz.schemas[norm]) {
+      throw new Error(`Schema "${norm}" not found in business "${businessId}"`);
+    }
+    const deleted = biz.schemas[norm];
+    delete biz.schemas[norm];
+
+    await this.logConfigChange('delete_schema', `${businessId}.${norm}`, deleted, null);
+    await this.db.setKV('app_config', this.state.config);
+    return { success: true, schemaName: norm };
+  }
+
+  async editBusiness(businessId, updates) {
+    const idx = this.state.config.businesses.findIndex(b => b.id === businessId);
+    if (idx === -1) throw new Error(`Business "${businessId}" not found`);
+    const oldBiz = { ...this.state.config.businesses[idx] };
+    if (updates.id && updates.id !== businessId) {
+      throw new Error('Business id cannot be changed');
+    }
+    this.state.config.businesses[idx] = { ...oldBiz, ...updates, id: businessId };
+
+    await this.logConfigChange('update_business', businessId, oldBiz, this.state.config.businesses[idx]);
+    await this.db.setKV('app_config', this.state.config);
+    return { success: true, business: businessId };
+  }
+
+  async deleteBusiness(businessId) {
+    if (this.state.config.businesses.length <= 1) {
+      throw new Error('Cannot delete the only remaining workspace');
+    }
+    const idx = this.state.config.businesses.findIndex(b => b.id === businessId);
+    if (idx === -1) throw new Error(`Business "${businessId}" not found`);
+
+    const deleted = this.state.config.businesses.splice(idx, 1)[0];
+    if (this.state.activeBusinessId === businessId) {
+      this.state.activeBusinessId = this.state.config.businesses[0].id;
+    }
+    // Remove associated records and chat from the workspace DB.
+    try {
+      await this.db.deleteRecordsByBusiness?.(businessId);
+      await this.db.clearChat?.(businessId);
+    } catch { /* best-effort cleanup */ }
+
+    await this.logConfigChange('delete_business', businessId, deleted, null);
+    await this.db.setKV('app_config', this.state.config);
+    return { success: true, businessId };
   }
 
   async addTool(tool) {

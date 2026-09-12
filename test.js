@@ -1,4 +1,12 @@
 // test.js - Comprehensive Test Suite for AI Workspace Pro
+//
+// Four suites:
+//   A. Hermetic offline: units, storage, config semantics, tool registry, chains, agents, parsing.
+//   B. Config strict validation: collectConfigIssues / isPlaceholder / applyRuntimeOverrides.
+//   C. Tools (real data operations): runs with MODELS_DISABLED so every reply is the
+//      honest data-derived fallback — never canned text.
+//   D. Real-model integration (Node only): loads the actual small HF models from cache and
+//      verifies real inference. Skips when AIWS_SKIP_MODEL_TESTS=1 or launched with MODELS_DISABLED=1.
 
 import {
   WorkspaceDB,
@@ -19,11 +27,77 @@ import {
   registerAllCoreTools,
   getActiveCharacter,
   getActiveBusiness,
-  state
+  collectConfigIssues,
+  isPlaceholder,
+  applyRuntimeOverrides,
+  getModel,
+  computeEmbedding,
+  embedText,
+  unloadAll,
+  getPipelineStatus,
+  PIPELINE_STAGES,
+  getModelCatalog,
+  getModelsForStage,
+  getModelMeta,
+  getStageOptions,
+  applyStageModel,
+  defaultModelSettings,
+  ModelError,
+  formatModelError,
+  preloadModels,
+  classifyIntent,
+  extractEntities,
+  generateResponse,
+  composeToolText,
+  runPipeline,
+  INTENT_LABELS,
+  state,
+  getBackend,
+  listBackends,
+  resolveBackendForStage,
+  setStageBackend,
+  createBackend,
+  registerBackend,
+  agentLoop,
+  Skill,
+  SkillLibrary,
+  skillLibrary,
+  BUILTIN_SKILLS,
+  compactChat,
+  buildDigestSummary,
+  startPiRpc,
+  createPiClient,
+  createPiServer,
+  PiRpcError,
+  detectDevice,
+  defaultProbes,
+  getModelFit,
+  recommendModelSet,
+  describeDevice,
+  DEVICE_TIERS,
+  getDeviceRecommendations,
+  buildRecommendedModelSettings,
+  rankTools,
+  routeToAgent,
+  probeAllBackends,
+  resetHealthCache,
+  configAPI,
+  ExtensionRegistry,
+  extensionRegistry,
+  applyBuiltinExtensions,
+  BUILTIN_EXTENSIONS,
+  permissionMeta
 } from './app.js';
+import worker from './worker/index.js';
 
 const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
 const isBrowser = typeof window !== 'undefined';
+
+// Real-model suite only runs in Node, is skipped on explicit request, and never
+// runs when the process was launched already disabled (respecting user intent).
+const launchedModelDisabled = isNode && process.env.MODELS_DISABLED === '1';
+const AIWS_SKIP_MODEL_TESTS = (isNode && launchedModelDisabled) ||
+                              (isNode && process.env.AIWS_SKIP_MODEL_TESTS === '1');
 
 let passCount = 0;
 let failCount = 0;
@@ -100,6 +174,12 @@ async function runAllTests() {
 
   const agentComm = new AgentCommunication(state, testDb);
   const googleAPI = new GoogleAPI(state, testDb);
+
+  // Hermetic suites (A–C): turn models OFF so every tool reply is the honest
+  // data-derived fallback (never canned/native text) and no weights are
+  // downloaded headlessly. The dedicated real-model suite re-enables them.
+  if (isNode) process.env.MODELS_DISABLED = '1';
+  else if (isBrowser) window.__MODELS_DISABLED__ = true;
 
   // 1. Math & String Utilities
   await runTest('Utils', 'cosineSimilarity with identical vectors returns 1', () => {
@@ -181,6 +261,28 @@ async function runAllTests() {
     assert(!updated.some(r => r.id === rec.id), 'Record should be deleted');
   });
 
+  await runTest('WorkspaceDB', 'updateRecord patches record data', async () => {
+    const rec = await testDb.addRecord('personal', 'transactions', { description: 'Before', type: 'expense' }, [0.5]);
+    await testDb.updateRecord(rec.id, { description: 'After', amount: 10 }, [0.6]);
+    const found = await testDb.getRecordById(rec.id);
+    assert(found, 'Record should still exist');
+    assertEquals(found.data.description, 'After');
+    assertEquals(found.data.amount, 10);
+    assertEquals(found.data.type, 'expense', 'updateRecord should merge, not replace, existing data');
+    assertEquals(found.embedding[0], 0.6, 'Embedding should be updated');
+  });
+
+  await runTest('WorkspaceDB', 'deleteRecordsByBusiness removes all records for a business', async () => {
+    await testDb.addRecord('doomed_biz', 'transactions', { description: 'A' });
+    await testDb.addRecord('doomed_biz', 'transactions', { description: 'B' });
+    await testDb.addRecord('personal', 'transactions', { description: 'Keep' });
+    await testDb.deleteRecordsByBusiness('doomed_biz');
+    const doomed = await testDb.getRecords('doomed_biz');
+    const keep = await testDb.getRecords('personal', 'transactions');
+    assertEquals(doomed.length, 0, 'All doomed_biz records should be gone');
+    assert(keep.length > 0, 'Personal records should remain');
+  });
+
   await runTest('WorkspaceDB', 'searchSimilar computes vector similarity ranking', async () => {
     await testDb.addRecord('personal', 'transactions', { description: 'AI Research Paper' }, [0.9, 0.1, 0.0]);
     await testDb.addRecord('personal', 'transactions', { description: 'Cooking Recipe' }, [0.0, 0.1, 0.9]);
@@ -255,6 +357,50 @@ async function runAllTests() {
     assert(schemas.test_table !== undefined, 'test_table should be registered');
   });
 
+  await runTest('ConfigAPI', 'updateSchema patches existing schema', async () => {
+    const api = new ConfigAPI(testDb, state);
+    await api.addSchema('personal', 'test_table_upd', {
+      fields: { title: 'string', rating: 'number' },
+      vectorize: ['title']
+    });
+    await api.updateSchema('personal', 'test_table_upd', { vectorize: ['title', 'rating'] });
+    const updated = api.getSchemas('personal').test_table_upd;
+    assert(updated && updated.vectorize.includes('rating'), 'vectorize should be patched');
+  });
+
+  await runTest('ConfigAPI', 'deleteSchema removes schema table', async () => {
+    const api = new ConfigAPI(testDb, state);
+    await api.addSchema('personal', 'doomed_table', {
+      fields: { title: 'string' },
+      vectorize: ['title']
+    });
+    await api.deleteSchema('personal', 'doomed_table');
+    const schemas = api.getSchemas('personal');
+    assert(schemas.doomed_table === undefined, 'doomed_table should be removed');
+    let threw = false;
+    try { await api.deleteSchema('personal', 'doomed_table'); } catch (e) { threw = true; }
+    assert(threw, 're-deleting a missing schema should throw');
+  });
+
+  await runTest('ConfigAPI', 'editBusiness renames workspace', async () => {
+    const api = new ConfigAPI(testDb, state);
+    await api.addBusiness({ id: 'renamable_corp', name: 'Old Name' });
+    await api.editBusiness('renamable_corp', { name: 'New Name' });
+    const biz = api.getBusinesses().find(b => b.id === 'renamable_corp');
+    assertEquals(biz.name, 'New Name');
+    let threw = false;
+    try { await api.editBusiness('renamable_corp', { id: 'different_id' }); } catch (e) { threw = true; }
+    assert(threw, 'changing business id should throw');
+  });
+
+  await runTest('ConfigAPI', 'deleteBusiness removes workspace and chains', async () => {
+    const api = new ConfigAPI(testDb, state);
+    await api.addBusiness({ id: 'doomed_corp', name: 'Doomed Corp' });
+    await api.deleteBusiness('doomed_corp');
+    const biz = api.getBusinesses().find(b => b.id === 'doomed_corp');
+    assert(biz === undefined, 'doomed_corp should be removed');
+  });
+
   await runTest('ConfigAPI', 'getActiveCharacter and getActiveBusiness handle empty/custom configs gracefully', () => {
     const mockState = { config: { app: { defaultCharacter: 'custom_bot', defaultBusiness: 'custom_biz' }, characters: [], businesses: [] } };
     const char = getActiveCharacter(mockState);
@@ -263,7 +409,716 @@ async function runAllTests() {
     assertEquals(biz.id, 'custom_biz');
   });
 
-  // 4. Tool Registry & Sandboxing
+  // 3b. Config Strict Validation (no placeholders, secrets enforced, runtime overrides)
+  await runTest('ConfigStrict', 'collectConfigIssues flags empty Google clientId as E_SECRET_MISSING', () => {
+    const issues = collectConfigIssues(configData);
+    const hit = issues.find(i => i.code === 'E_SECRET_MISSING' && (i.path || '').includes('clientId'));
+    assert(hit !== undefined, `Expected E_SECRET_MISSING for clientId — got: ${JSON.stringify(issues)}`);
+  });
+
+  await runTest('ConfigStrict', 'isPlaceholder recognizes every placeholder idiom', () => {
+    assert(isPlaceholder('YOUR_GOOGLE_CLIENT_ID_HERE'), 'YOUR_ prefix');
+    assert(isPlaceholder('CHANGE_ME'), 'CHANGE_ME');
+    assert(isPlaceholder('INSERT_API_KEY_HERE'), 'INSERT_ prefix');
+    assert(isPlaceholder('REPLACE_WITH_TOKEN'), 'REPLACE_ prefix');
+    assert(isPlaceholder('todo: put your key'), 'TODO idiom');
+    assert(isPlaceholder('<your-google-client-id>'), 'angle-bracket marker');
+  });
+
+  await runTest('ConfigStrict', 'isPlaceholder does not reject real values or empty strings', () => {
+    assertEquals(isPlaceholder(''), false);
+    assertEquals(isPlaceholder('abc123.apps.googleusercontent.com'), false);
+    assertEquals(isPlaceholder('AIzaSyD-abcdefgh1234567890'), false);
+  });
+
+  await runTest('ConfigStrict', 'applyRuntimeOverrides: GOOGLE_CLIENT_ID env always wins', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'ENV_CLIENT_ABC';
+    process.env.AIWS_CONFIG_JSON = JSON.stringify({ app: { google: { clientId: 'JSON_CLIENT_DEF' } } });
+    const cfg = JSON.parse(JSON.stringify(configData));
+    await applyRuntimeOverrides(cfg);
+    assertEquals(cfg.app.google.clientId, 'ENV_CLIENT_ABC');
+    delete process.env.GOOGLE_CLIENT_ID;
+    delete process.env.AIWS_CONFIG_JSON;
+  });
+
+  await runTest('ConfigStrict', 'applyRuntimeOverrides: AIWS_CONFIG_JSON replaces arrays, not merges', async () => {
+    process.env.AIWS_CONFIG_JSON = JSON.stringify({ quickPrompts: ['Only prompt', 'Second prompt'] });
+    const cfg = JSON.parse(JSON.stringify(configData));
+    await applyRuntimeOverrides(cfg);
+    assert(Array.isArray(cfg.quickPrompts) && cfg.quickPrompts.length === 2, 'Array must be replaced wholesale');
+    delete process.env.AIWS_CONFIG_JSON;
+  });
+
+  await runTest('ConfigStrict', 'resolved config is clean after overrides (no secret issues)', async () => {
+    process.env.GOOGLE_CLIENT_ID = 'ENV_CLIENT_ABC';
+    const cfg = JSON.parse(JSON.stringify(configData));
+    await applyRuntimeOverrides(cfg);
+    const issues = collectConfigIssues(cfg);
+    assert(!issues.some(i => i.code === 'E_SECRET_MISSING' || i.code === 'E_SECRET_PLACEHOLDER'),
+      `Unexpected secret issues: ${JSON.stringify(issues)}`);
+    delete process.env.GOOGLE_CLIENT_ID;
+  });
+
+  // 3c. Model API (hermetic) — proves the "no fabrication, typed errors" contract
+  await runTest('Models', 'getPipelineStatus reports disabled when MODELS_DISABLED set', () => {
+    const status = getPipelineStatus();
+    assertEquals(status.disabled, true);
+  });
+
+  await runTest('Models', 'getModel rejects with E_DISABLED instead of fabricating', async () => {
+    try {
+      await getModel('embedder');
+      throw new Error('getModel should have rejected');
+    } catch (err) {
+      assertEquals(err.code, 'E_DISABLED');
+    }
+  });
+
+  await runTest('Models', 'generateResponse never fabricates: throws E_DISABLED when disabled', async () => {
+    try {
+      await generateResponse({ intent: 'small_talk', message: 'hi', result: null, params: {}, persona: 'You are a helpful assistant.' });
+      throw new Error('generateResponse should have rejected');
+    } catch (err) {
+      assertEquals(err.code, 'E_DISABLED');
+    }
+  });
+
+  await runTest('Models', 'composeToolText falls back to honest data text when dialog unavailable', async () => {
+    const fallback = '🆕 Added to-do: buy milk';
+    const text = await composeToolText('add_todo', {
+      message: 'add todo: buy milk',
+      result: { text: fallback },
+      params: { task: 'buy milk' },
+      persona: 'You are a helpful assistant.'
+    }, fallback);
+    assertEquals(text, fallback);
+  });
+
+  await runTest('Models', 'classifyIntent returns null intent when disabled (rules handle routing)', async () => {
+    const res = await classifyIntent('Spent $12 on coffee', state);
+    assertEquals(res.intent, null);
+    assertEquals(res.source, 'model');
+  });
+
+  await runTest('Models', 'embedText and computeEmbedding are null when embedder disabled', async () => {
+    assertEquals(await embedText('AI Workspace Pro'), null);
+    assertEquals(await computeEmbedding('transactions', { description: 'Coffee' }), null);
+  });
+
+  await runTest('Models', 'formatModelError renders code + message + fix for ModelError and plain objects', () => {
+    const msg = formatModelError(new ModelError('E_LOAD_MODEL', 'dialog', 'boom', 'retry', 'Xenova/x'));
+    assert(msg.includes('[E_LOAD_MODEL]') && msg.includes('boom') && msg.includes('retry') && msg.includes('stage: dialog'), 'ModelError formatting');
+    const plain = formatModelError({ code: 'E_INFER', stage: 'dialog', message: 'plain failure', fix: 'run it again' });
+    assert(plain.includes('[E_INFER]') && plain.includes('plain failure') && plain.includes('run it again'), 'plain-object formatting');
+  });
+
+  await runTest('Models', 'getModelCatalog exposes the expanded catalog with size metadata', () => {
+    const catalog = getModelCatalog();
+    assert(catalog.length >= 14, `expected an expanded catalog, got ${catalog.length}`);
+    for (const m of catalog) {
+      assert(m.id && m.name && m.type, 'every catalog entry needs id/name/type');
+    }
+    const types = new Set(catalog.map(m => m.type));
+    for (const t of ['embedder', 'classifier', 'ner', 'generator']) {
+      assert(types.has(t), `catalog should contain at least one "${t}"`);
+    }
+    assert(catalog.every(m => m.sizeMb === undefined || (typeof m.sizeMb === 'number' && m.sizeMb > 0)), 'sizeMb must be a positive number when present');
+  });
+
+  await runTest('Models', 'getModelsForStage narrows the catalog per stage and flags the configured model', () => {
+    const enc = getModelsForStage('encoder');
+    assert(enc.length >= 5, `expected multiple embedder choices, got ${enc.length}`);
+    assert(enc.every(m => m.type === 'embedder' && m.stage === 'encoder'), 'encoder stage options must all be embedders');
+    assert(enc.some(m => m.id === 'Xenova/all-MiniLM-L6-v2' && m.current), 'current embedder must be flagged');
+    assert(enc.some(m => m.id === 'Xenova/gte-small'), 'verified embedders should be selectable');
+
+    const tag = getModelsForStage('tagger');
+    assert(tag.some(m => m.id === 'Xenova/bert-base-NER' && m.current), 'configured NER model must be present and flagged');
+    assert(tag.every(m => m.type === 'ner'), 'tagger options must be NER models');
+  });
+
+  await runTest('Models', 'getModelMeta resolves catalog metadata by id', () => {
+    const meta = getModelMeta('Xenova/gte-small');
+    assert(meta && meta.type === 'embedder' && typeof meta.sizeMb === 'number', 'gte-small metadata should resolve');
+    assertEquals(getModelMeta('Xenova/does-not-exist'), null);
+  });
+
+  await runTest('Models', 'getStageOptions covers all four stages with current models', async () => {
+    const opts = await getStageOptions();
+    assertEquals(opts.length, 4);
+    for (const o of opts) {
+      assert(o.key && o.options.length > 0 && o.model, `stage ${o.key} needs options + a configured model`);
+      assert(o.options.some(m => m.current), `stage ${o.key} must flag its configured model`);
+    }
+  });
+
+  await runTest('Models', 'applyStageModel updates pipeline.stages and helper fields consistently', async () => {
+    const originalMs = JSON.parse(JSON.stringify(state.config.modelSettings));
+    try {
+      const res = applyStageModel('encoder', 'Xenova/bge-small-en-v1.5');
+      assertEquals(res.stage, 'encoder');
+      assertEquals(res.model, 'Xenova/bge-small-en-v1.5');
+      const stage = state.config.modelSettings.pipeline.stages.find(s => s.key === 'encoder');
+      assertEquals(stage.model, 'Xenova/bge-small-en-v1.5');
+      assertEquals(state.config.modelSettings.embedder, 'Xenova/bge-small-en-v1.5', 'helper embedder must stay in sync');
+
+      const gen = applyStageModel('dialog', 'Xenova/flan-t5-small');
+      assertEquals(gen.model, 'Xenova/flan-t5-small');
+      assertEquals(state.config.modelSettings.generator, 'Xenova/flan-t5-small', 'helper generator must stay in sync');
+
+      applyStageModel('tagger', 'Xenova/bert-base-NER');
+      assertEquals(state.config.modelSettings.pipeline.stages.find(s => s.key === 'tagger').model, 'Xenova/bert-base-NER');
+      assertEquals(getModelsForStage('tagger').find(m => m.id === 'Xenova/bert-base-NER').current, true);
+    } finally {
+      state.config.modelSettings = originalMs;
+    }
+  });
+
+  await runTest('Models', 'applyStageModel rejects unknown stages and empty model ids with typed errors', () => {
+    let unknown = null;
+    try { applyStageModel('bogus-stage', 'Xenova/x'); } catch (err) { unknown = err; }
+    assert(unknown instanceof ModelError && unknown.code === 'E_UNKNOWN_STAGE', 'unknown stage must throw E_UNKNOWN_STAGE');
+
+    let empty = null;
+    try { applyStageModel('tagger', '  '); } catch (err) { empty = err; }
+    assert(empty instanceof ModelError && empty.code === 'E_LOAD_MODEL', 'empty model id must throw a typed error');
+  });
+
+  await runTest('Models', 'defaultModelSettings rebuilds defaults and preserves the catalog', () => {
+    const before = state.config.modelSettings.availableModels.length;
+    const d = defaultModelSettings();
+    assertEquals(d.dtype, 'q8');
+    assertEquals(d.embedder, 'Xenova/all-MiniLM-L6-v2');
+    assert(d.pipeline.stages.some(s => s.key === 'dialog' && s.model === 'Xenova/LaMini-Flan-T5-248M'), 'dialog default should be the balanced model');
+    assertEquals(d.availableModels.length, before, 'reset must keep the catalog');
+  });
+
+  // 3b. Backend routing (Phase 1 hermetic)
+  await runTest('Routing', 'registry exposes all three backends', () => {
+    const ids = listBackends().map(b => b.id).sort();
+    assert(ids.includes('transformers'), 'transformers backend registered');
+    assert(ids.includes('llamacpp'), 'llamacpp backend registered');
+    assert(ids.includes('ollama'), 'ollama backend registered');
+  });
+
+  await runTest('Routing', 'llamacpp backend interface conforms to LLMBackend contract', () => {
+    const b = getBackend('llamacpp');
+    assert(b && b.id === 'llamacpp', 'id');
+    assert(typeof b.label === 'string' && b.label.length > 0, 'label');
+    assert(b.kind === 'llamacpp', 'kind');
+    assert(typeof b.health === 'function', 'health');
+    assert(typeof b.generate === 'function', 'generate');
+    assert(typeof b.embed === 'function', 'embed');
+  });
+
+  await runTest('Routing', 'ollama backend interface conforms to LLMBackend contract', () => {
+    const b = getBackend('ollama');
+    assert(b && b.id === 'ollama', 'id');
+    assert(typeof b.label === 'string' && b.label.length > 0, 'label');
+    assert(b.kind === 'ollama', 'kind');
+    assert(b.canTools === true, 'ollama supports tool calling');
+    assert(typeof b.health === 'function', 'health');
+    assert(typeof b.generate === 'function', 'generate');
+    assert(typeof b.embed === 'function', 'embed');
+  });
+
+  await runTest('Routing', 'resolveBackendForStage returns transformers when all remotes disabled', () => {
+    const originalRouting = state.config.app.ai.routing;
+    try {
+      state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto' };
+      const dialogB = resolveBackendForStage('dialog');
+      const embedB = resolveBackendForStage('embedder');
+      assert(dialogB && dialogB.id === 'transformers', `dialog auto with disabled remotes → transformers, got ${dialogB?.id}`);
+      assert(embedB && embedB.id === 'transformers', `embedder auto with disabled remotes → transformers, got ${embedB?.id}`);
+    } finally {
+      state.config.app.ai.routing = originalRouting;
+    }
+  });
+
+  await runTest('Routing', 'resolveBackendForStage respects explicit stage config', () => {
+    const originalRouting = state.config.app.ai.routing;
+    try {
+      state.config.app.ai.routing = { dialog: 'transformers', embedder: 'transformers' };
+      assertEquals(resolveBackendForStage('dialog').id, 'transformers');
+      assertEquals(resolveBackendForStage('embedder').id, 'transformers');
+    } finally {
+      state.config.app.ai.routing = originalRouting;
+    }
+  });
+
+  await runTest('Routing', 'resolveBackendForStage falls back to transformers for unknown backend id', () => {
+    const originalRouting = state.config.app.ai.routing;
+    try {
+      state.config.app.ai.routing = { dialog: 'nonexistent-provider', embedder: 'nonexistent-provider' };
+      assertEquals(resolveBackendForStage('dialog').id, 'transformers');
+      assertEquals(resolveBackendForStage('embedder').id, 'transformers');
+    } finally {
+      state.config.app.ai.routing = originalRouting;
+    }
+  });
+
+  await runTest('Routing', 'llamacpp health reports disabled when config enabled is false', async () => {
+    const b = getBackend('llamacpp');
+    const h = await b.health();
+    assertEquals(h.ok, false);
+    assert(h.detail.includes('disabled'), 'detail mentions disabled');
+  });
+
+  await runTest('Routing', 'ollama health reports disabled when config enabled is false', async () => {
+    const b = getBackend('ollama');
+    const h = await b.health();
+    assertEquals(h.ok, false);
+    assert(h.detail.includes('disabled'), 'detail mentions disabled');
+  });
+
+  await runTest('Routing', 'setStageBackend writes routing config', async () => {
+    const original = state.config.app.ai.routing.dialog;
+    await setStageBackend('dialog', 'ollama');
+    assertEquals(state.config.app.ai.routing.dialog, 'ollama');
+    await setStageBackend('dialog', original || 'auto');
+  });
+
+  // 3c. Agent loop (Phase 2 hermetic helpers)
+  const fakeAgentBackend = (() => {
+    let calls = 0;
+    const backend = createBackend({
+      id: 'fake-agent',
+      label: 'Fake Agent Backend',
+      kind: 'fake',
+      canTools: true,
+      async health() { return { ok: true, detail: 'fake ok' }; },
+      async embed() { return null; },
+      async *generate(req = {}) {
+        calls += 1;
+        if (calls === 1) {
+          yield {
+            toolCall: {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'get_config', arguments: '{"path":"app.theme.mode"}' }
+            }
+          };
+          return;
+        }
+        yield { text: 'The theme mode is light.' };
+      }
+    });
+    registerBackend(backend);
+    return { backend, reset: () => { calls = 0; } };
+  })();
+
+  await runTest('AgentLoop', 'routes through agent loop when backend canTools and returns tool result', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const executed = [];
+      const loop = await agentLoop({
+        message: 'What is the theme mode?',
+        persona: 'You are a helpful assistant.',
+        runner: async (name, params) => {
+          executed.push({ name, params });
+          return { text: 'light' };
+        }
+      });
+      assertEquals(executed.length, 1);
+      assertEquals(executed[0].name, 'get_config');
+      assertEquals(executed[0].params.path, 'app.theme.mode');
+      assertEquals(loop.answer, 'The theme mode is light.');
+      assertEquals(loop.iterations, 2);
+      assertEquals(loop.toolCalls.length, 1);
+      assertEquals(loop.toolCalls[0].name, 'get_config');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('AgentLoop', 'returns null when no tool-capable backend is configured', async () => {
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'transformers';
+      const loop = await agentLoop({
+        message: 'hello',
+        runner: async () => ({})
+      });
+      assertEquals(loop, null);
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('AgentLoop', 'returns null when no runner is injected', async () => {
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const loop = await agentLoop({ message: 'hello' });
+      assertEquals(loop, null);
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('AgentLoop', 'honestly reports tool errors back to the model', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const loop = await agentLoop({
+        message: 'break things',
+        runner: async () => { throw new Error('boom'); }
+      });
+      assertEquals(loop.answer, 'The theme mode is light.');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  // 3d. Skills (Phase 3)
+  await runTest('Skills', 'SkillLibrary ships the built-in skills and registers new ones', async () => {
+    const lib = new SkillLibrary();
+    assertEquals(lib.listSkills().length, BUILTIN_SKILLS.length);
+    assertEquals(lib.getSkill('expense-intake').name, 'Expense Intake');
+    lib.registerSkill({ id: 'test-skill', name: 'Test', specializations: ['x'], triggers: ['zap'], steps: ['step'], prompt: 'do it' });
+    assert(lib.getSkill('test-skill') instanceof Skill, 'registered skill is a Skill instance');
+    lib.unregisterSkill('test-skill');
+    assertEquals(lib.getSkill('test-skill'), null);
+  });
+
+  await runTest('Skills', 'findSkillsForMessage matches triggers case-insensitively', () => {
+    const matches = skillLibrary.findSkillsForMessage('I spent $12 on lunch today');
+    const ids = matches.map(s => s.id);
+    assert(ids.includes('expense-intake'), `expected expense-intake, got ${ids.join(',')}`);
+    assert(!ids.includes('semantic-retrieval'), 'no retrieval trigger fires for this message');
+    assert(!skillLibrary.findSkillsForMessage('zzz nothing here').length, 'no skills fire for irrelevant text');
+  });
+
+  await runTest('Skills', 'augmentPersona is null when character has no overlap', () => {
+    const char = { id: 'marcus', specialization: ['finance', 'budgeting'] };
+    const fragment = skillLibrary.augmentPersona('remind me to call the bank', char);
+    assert(fragment === null, `task-capture must not fire for finance character, got ${fragment}`);
+  });
+
+  await runTest('Skills', 'augmentPersona folds matching skill directive into a persona string', () => {
+    const char = { id: 'aria', specialization: ['tasks'] };
+    const fragment = skillLibrary.augmentPersona('remind me to call the bank', char);
+    assert(fragment && fragment.includes('Current skill directives') && fragment.includes('Task Capture'), 'persona augmented with task-capture skill');
+  });
+
+  await runTest('Skills', 'evolveCharacter lists skills a character can apply', () => {
+    const summary = skillLibrary.evolveCharacter('aria');
+    assert(summary.includes('aria') && summary.includes('skill(s)'), 'evolveCharacter captures capability summary');
+  });
+
+  // 3e. Session compaction (Phase 3)
+  await runTest('Compaction', 'buildDigestSummary counts roles and topics from messages', () => {
+    const summary = buildDigestSummary([
+      { role: 'user', content: 'Spent $16.50 on lunch at cafe' },
+      { role: 'assistant', content: 'Recorded your lunch expense.' },
+      { role: 'user', content: 'Add todo buy milk' }
+    ]);
+    assert(summary.includes('2 user turn(s)'), 'digest counts user turns, got: ' + summary);
+    assert(summary.includes('1 assistant turn(s)'), 'digest counts assistant turns');
+  });
+
+  await runTest('Compaction', 'compactChat collapses older messages and preserves the tail', async () => {
+    const testDb = new WorkspaceDB('TestDB_Compaction');
+    await testDb.init();
+    const biz = 'personal';
+    const created = [];
+    for (let i = 0; i < 15; i++) {
+      const msg = await testDb.addChatMessage({
+        businessId: biz,
+        role: i % 2 === 0 ? 'user' : 'assistant',
+        content: `message ${i} about coffee lunch budget`,
+        timestamp: Date.now() + i
+      });
+      created.push(msg.id);
+    }
+    const result = await compactChat(testDb, biz, { keepRecent: 5 });
+    assert(result && result.compacted === true, 'compaction ran');
+    assertEquals(result.originalCount, 15);
+    assertEquals(result.keptCount, 5);
+    const chat = await testDb.getChat(biz);
+    assertEquals(chat.length, 6, 'summary + retained tail');
+    assert(chat[0].summary === true && chat[0].content.startsWith('Session summary:'), 'first message is the synthetic summary');
+    assertEquals(chat.slice(1).length, 5, '5 newest messages preserved');
+  });
+
+  await runTest('Compaction', 'compactChat is a no-op below the threshold', async () => {
+    const testDb = new WorkspaceDB('TestDB_CompactionNoop');
+    await testDb.init();
+    await testDb.addChatMessage({ businessId: 'personal', role: 'user', content: 'hi', timestamp: 1 });
+    const result = await compactChat(testDb, 'personal', { keepRecent: 10 });
+    assertEquals(result, null);
+  });
+
+  await runTest('Compaction', 'compactChat accepts a custom summarizer', async () => {
+    const testDb = new WorkspaceDB('TestDB_CompactionSumm');
+    await testDb.init();
+    for (let i = 0; i < 12; i++) {
+      await testDb.addChatMessage({ businessId: 'personal', role: 'user', content: 'seed', timestamp: 1000 + i });
+    }
+    const result = await compactChat(testDb, 'personal', { keepRecent: 2, summarizer: async () => 'custom summary text' });
+    assert(result && result.compacted === true, 'compacted');
+    const chat = await testDb.getChat('personal');
+    assertEquals(chat[0].content, 'Session summary:\ncustom summary text');
+  });
+
+  // 3f. Pi RPC sidecar (Phase 4)
+  await runTest('PiRpc', 'createPiClient sends a JSON-RPC envelope and returns result', async () => {
+    let seenBody = null;
+    let seenUrl = null;
+    const client = createPiClient({
+      baseUrl: 'http://localhost:9300/',
+      fetchFn: async (url, opts) => {
+        seenUrl = url;
+        seenBody = JSON.parse(opts.body);
+        return new Response(JSON.stringify({ jsonrpc: '2.0', result: { ok: true }, id: seenBody.id }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        });
+      }
+    });
+    const result = await client.call('speak', { text: 'hello' });
+    assertEquals(result.ok, true);
+    assertEquals(seenUrl, 'http://localhost:9300/rpc');
+    assertEquals(seenBody.jsonrpc, '2.0');
+    assertEquals(seenBody.method, 'speak');
+    assertEquals(seenBody.params.text, 'hello');
+  });
+
+  await runTest('PiRpc', 'createPiClient surfaces server-side RPC errors', async () => {
+    const client = createPiClient({
+      baseUrl: 'http://localhost:9300',
+      fetchFn: async () => new Response(
+        JSON.stringify({ jsonrpc: '2.0', error: { code: -32601, message: 'Method not found' }, id: 1 }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    });
+    let caught = null;
+    try {
+      await client.call('nope');
+    } catch (err) {
+      caught = err;
+    }
+    assert(caught instanceof PiRpcError, 'server error is a PiRpcError');
+    assertEquals(caught.code, -32601);
+  });
+
+  await runTest('PiRpc', 'createPiClient wraps transport failures', async () => {
+    const client = createPiClient({
+      baseUrl: 'http://localhost:9300',
+      fetchFn: async () => { throw new Error('socket hang up'); }
+    });
+    let msg = '';
+    try {
+      await client.call('ping');
+    } catch (err) {
+      msg = err.message;
+    }
+    assert(msg.includes('socket hang up'), `expected wrapped failure, got: ${msg}`);
+  });
+
+  await runTest('PiRpc', 'startPiRpc is disabled unless explicitly configured', async () => {
+    const old = process.env.AIWS_PI_RPC_PORT;
+    try {
+      delete process.env.AIWS_PI_RPC_PORT;
+      const handle = await startPiRpc({ config: {} });
+      assertEquals(handle, null);
+      process.env.AIWS_PI_RPC_PORT = 'off';
+      assertEquals(await startPiRpc({ config: {} }), null);
+      assertEquals(await startPiRpc({ config: { app: { ai: { pi: { enabled: false } } } } }), null);
+    } finally {
+      if (old === undefined) delete process.env.AIWS_PI_RPC_PORT;
+      else process.env.AIWS_PI_RPC_PORT = old;
+    }
+  });
+
+  if (isNode) {
+    await runTest('PiRpc', 'server round-trip: ping/greet/method-not-found over real fetch', async () => {
+      const server = await createPiServer({
+        port: 0,
+        methods: {
+          greet: params => ({ hello: params && params.name ? `hi ${params.name}` : 'hi' })
+        }
+      });
+      await server.listen();
+      const client = createPiClient({ baseUrl: `http://127.0.0.1:${server.port}` });
+      try {
+        const ping = await client.call('ping');
+        assertEquals(ping.pong, true);
+        assertEquals((await client.call('greet', { name: 'pi' })).hello, 'hi pi');
+        let notFound = null;
+        try { await client.call('does_not_exist'); } catch (err) { notFound = err; }
+        assert(notFound instanceof PiRpcError && notFound.code === -32601, 'unknown method yields -32601');
+      } finally {
+        await server.close();
+      }
+    });
+  }
+
+  // 4. Device Profiling & Model Recommendations (Phase 5 hermetic)
+  await runTest('Device', 'detectDevice builds a phone profile and tier', () => {
+    const probes = {
+      formFactor: () => 'phone',
+      gpu: () => 'WebGL 2.0 (SwiftShader)',
+      cores: () => 4,
+      memoryMb: () => 2048,
+      wasmSimd: () => true,
+      wasm: () => true,
+      network: () => ({ effectiveType: '4g', downlink: 4.2, saveData: false }),
+      battery: () => null
+    };
+    const profile = detectDevice(probes);
+    assert(profile.formFactor === 'phone', 'formFactor should be phone');
+    assertEquals(profile.cores, 4);
+    assertEquals(profile.memoryMb, 2048);
+    assertEquals(profile.gpuKind, 'swiftshader');
+    assert(profile.tier === DEVICE_TIERS.LOW, `expected low tier, got ${profile.tier}`);
+    assert(profile.score >= 0 && profile.score <= 100, 'score out of range');
+    assert(typeof profile.summary === 'string' && profile.summary.length > 0, 'summary missing');
+  });
+
+  await runTest('Device', 'detectDevice scores a desktop GPU machine high', () => {
+    const probes = {
+      formFactor: () => 'desktop',
+      gpu: () => 'ANGLE (NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0) (WebGPU)',
+      cores: () => 16,
+      memoryMb: () => 16384,
+      wasmSimd: () => true,
+      wasm: () => true,
+      network: () => null,
+      battery: () => null
+    };
+    const profile = detectDevice(probes);
+    assert(profile.tier === DEVICE_TIERS.HIGH, `expected high tier, got ${profile.tier} (${profile.score})`);
+    assert(profile.score >= 70, `expected score >= 70, got ${profile.score}`);
+    assertEquals(profile.gpuKind, 'webgpu');
+  });
+
+  await runTest('Device', 'detectDevice lands mid tier on a laptop', () => {
+    const probes = {
+      formFactor: () => 'laptop',
+      gpu: () => null,
+      cores: () => 8,
+      memoryMb: () => 8192,
+      wasmSimd: () => true,
+      wasm: () => true,
+      network: () => null,
+      battery: () => null
+    };
+    const profile = detectDevice(probes);
+    assert(profile.tier === DEVICE_TIERS.MID, `expected mid tier, got ${profile.tier} (${profile.score})`);
+    assert(profile.gpuKind === 'none', 'no GPU should map to none');
+    assert(profile.summary.includes('Laptop'), 'summary should lead with device kind');
+  });
+
+  await runTest('Device', 'recommendModelSet selects small models on low tier and larger on high', () => {
+    const low = detectDevice({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
+    const high = detectDevice({ formFactor: () => 'desktop', cores: () => 16, memoryMb: () => 16384, gpu: () => 'WebGPU', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
+    const planLow = recommendModelSet(low);
+    const planHigh = recommendModelSet(high);
+    assert(planLow.tier === 'low' && planLow.dtype, 'low plan should carry tier and dtype');
+    assert(planLow.stages.encoder.model !== planHigh.stages.encoder.model, 'encoder recommendation should differ by tier');
+    assert(planHigh.stages.encoder.model.includes('bge-base'), `high tier should pick bge-base, got ${planHigh.stages.encoder.model}`);
+    assert(planLow.stages.encoder.model.includes('MiniLM-L6'), `low tier should pick MiniLM-L6, got ${planLow.stages.encoder.model}`);
+    assert(planHigh.notes.length > 0 && planLow.notes.length > 0, 'notes should be present');
+  });
+
+  await runTest('Device', 'getModelFit grades models against device budget', () => {
+    const low = detectDevice({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
+    const ideal = getModelFit(low, { id: 'x/small', name: 'Small', sizeMb: 24 });
+    const heavy = getModelFit(low, { id: 'x/big', name: 'Big', sizeMb: 380 });
+    const tooHeavy = getModelFit(low, { id: 'x/huge', name: 'Huge', sizeMb: 900 });
+    assertEquals(ideal.verdict, 'ideal');
+    assertEquals(ideal.score, 100);
+    assert(heavy.verdict === 'ok' || heavy.verdict === 'heavy', `380MB on low should be ok/heavy, got ${heavy.verdict}`);
+    assertEquals(tooHeavy.verdict, 'too-heavy');
+    assert(ideal.reason.includes('fits'), 'ideal reason should explain budget fit');
+  });
+
+  await runTest('Device', 'defaultProbes are injectable and deterministic', () => {
+    const probes = defaultProbes();
+    // In a non-browser Node environment these should be null/false, not throw.
+    assert(typeof probes.formFactor() === 'string' || probes.formFactor() === null, 'formFactor probe should not throw');
+    assert(typeof probes.cores() === 'number' || probes.cores() === null, 'cores probe should not throw');
+    assert(probes.wasmSimd() === true || probes.wasmSimd() === false, 'wasmSimd probe should be boolean');
+  });
+
+  await runTest('Device', 'getDeviceRecommendations maps stages to catalog ids', async () => {
+    const rec = getDeviceRecommendations({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
+    assert(rec.profile && rec.profile.tier, 'profile attached');
+    assert(rec.stages.length === 4, `expected 4 stage recommendations, got ${rec.stages.length}`);
+    for (const s of rec.stages) {
+      assert(s.key && s.recommended && typeof s.recommended === 'string', `stage ${s.key} missing recommendation`);
+      assert(s.reason && s.reason.length > 0, `stage ${s.key} missing reason`);
+      const meta = getModelCatalog().find(m => m.id === s.recommended);
+      assert(!meta || typeof meta.sizeMb === 'number', `recommended id ${s.recommended} has no size in catalog`);
+    }
+  });
+
+  await runTest('Device', 'buildRecommendedModelSettings persists a coherent device plan', async () => {
+    const probes = { formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null };
+    const next = buildRecommendedModelSettings(probes);
+    assert(next, 'should build for a loaded config');
+    assert(next.dtype === 'q8', `dtype should be q8 for low tier, got ${next.dtype}`);
+    assert(next.embedder && next.classifier && next.generator, 'top-level helper ids set');
+    assert(Array.isArray(next.pipeline.stages) && next.pipeline.stages.length === 4, 'all four stages present');
+    const enc = next.pipeline.stages.find(s => s.key === 'encoder');
+    assert(enc.model === next.embedder, 'pipeline stage and top-level helper agree');
+    assert(next.embedder.includes('MiniLM-L6'), `low tier embedder should be MiniLM-L6, got ${next.embedder}`);
+  });
+
+  // 5. Worker deployment target (Phase 5 hermetic)
+  await runTest('Worker', '/api/health answers ok with service metadata', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/health', { method: 'GET' }),
+      {}
+    );
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assert(body.ok === true, 'health should report ok');
+    assertEquals(body.service, 'ai-workspace-pro');
+  });
+
+  await runTest('Worker', 'unknown /api path returns a 404 JSON envelope', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/nope', { method: 'GET' }),
+      {}
+    );
+    assertEquals(response.status, 404);
+    const body = await response.json();
+    assertEquals(body.ok, false);
+  });
+
+  await runTest('Worker', 'non-api requests are delegated to the ASSETS binding', async () => {
+    let served = null;
+    const env = {
+      ASSETS: {
+        fetch: async (req) => { served = req.url; return new Response('<!doctype html>', { status: 200, headers: { 'content-type': 'text/html' } }); }
+      }
+    };
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/', { method: 'GET' }),
+      env
+    );
+    assertEquals(response.status, 200);
+    assert(served === 'https://ai-workspace-pro.example.com/', 'ASSETS should receive the original request URL');
+    const text = await response.text();
+    assert(text.includes('doctype'), 'should return the SPA html');
+  });
+
+  await runTest('Worker', 'serves a graceful error when ASSETS binding is missing', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/dashboard', { method: 'GET' }),
+      {}
+    );
+    assertEquals(response.status, 500);
+    const body = await response.json();
+    assert(body.ok === false && body.error, 'expected a typed error body');
+  });
+
+  // 5. Tool Registry & Sandboxing
   await runTest('ToolRegistry', 'registers all 25 tools from config', () => {
     const registry = new ToolRegistry();
     registerAllCoreTools(registry, testDb, state, agentComm, googleAPI);
@@ -272,6 +1127,79 @@ async function runAllTests() {
     assert(registry.hasTool('add_transaction'), 'add_transaction tool should exist');
     assert(registry.hasTool('web_search'), 'web_search tool should exist');
     assert(registry.hasTool('delegate_to_agent'), 'delegate_to_agent tool should exist');
+  });
+
+  // 5b. Extensions (Pi-style modular bundles)
+  await runTest('Extensions', 'built-in manifest groups all 25 tools into named extensions', () => {
+    const reg = new ExtensionRegistry();
+    applyBuiltinExtensions(reg);
+    const exts = reg.listExtensions();
+    assertEquals(exts.length, BUILTIN_EXTENSIONS.length);
+    const all = exts.flatMap(e => e.tools);
+    assertEquals(all.length, 25, `Expected 25 tools grouped, got ${all.length}`);
+    assertEquals(reg.getExtensionFor('add_transaction').id, 'finance');
+    assertEquals(reg.getExtensionFor('web_search').id, 'web');
+    assertEquals(reg.getExtensionFor('execute_chain').id, 'system');
+    assertEquals(reg.getExtensionFor('google_drive_list').id, 'google');
+    assertEquals(reg.isEnabled('system'), true);
+  });
+
+  await runTest('Extensions', 'getAllTools annotates owning extension', () => {
+    const registry = new ToolRegistry();
+    registerAllCoreTools(registry, testDb, state, agentComm, googleAPI);
+    const tools = registry.getAllTools();
+    const finance = tools.find(t => t.name === 'add_transaction');
+    assert(finance && finance.extension === 'Finance' && finance.extensionId === 'finance',
+      'add_transaction should carry its extension metadata');
+    const sys = tools.find(t => t.name === 'execute_chain');
+    assert(sys && sys.extensionId === 'system', 'execute_chain should belong to the system extension');
+  });
+
+  await runTest('Extensions', 'disabled extension gate blocks execution and gateFor reports it', async () => {
+    const registry = new ToolRegistry();
+    const reg = new ExtensionRegistry();
+    applyBuiltinExtensions(reg);
+    reg.attach(registry);
+    // Hook a registry with one rogue custom tool claimed by the registry.
+    registry.register({
+      name: 'dup_check',
+      description: 'echo',
+      execute: async () => ({ ok: true }),
+      permissionLevel: 1
+    });
+    reg.claimDanglingTool('dup_check', 'custom');
+    const gate = reg.gateFor('dup_check');
+    assertEquals(gate.name, 'Dynamic Tools');
+    assertEquals(gate.enabled, true);
+    assertEquals((await registry.execute('dup_check', {}, null, {})).ok, true);
+
+    reg.setEnabled('custom', false);
+    const g2 = reg.gateFor('dup_check');
+    assertEquals(g2.enabled, false);
+    let denied = null;
+    try {
+      await registry.execute('dup_check', {}, null, {});
+    } catch (e) {
+      denied = e.message;
+    }
+    assert(denied && denied.includes('disabled'), `Expected disabled error, got ${denied}`);
+  });
+
+  await runTest('Extensions', 'system extension policy escalates execute_chain to SYSTEM', async () => {
+    const registry = new ToolRegistry();
+    const reg = new ExtensionRegistry();
+    applyBuiltinExtensions(reg, registry);
+    const gate = reg.gateFor('execute_chain');
+    assertEquals(gate.nominalLevel, 'system', 'execute_chain nominal level should be system');
+    assertEquals(await gate.policy('execute_chain', {}, {}), 'system');
+    assertEquals(reg.gateFor('list_tools').nominalLevel, 'read_only', 'list_tools stays read-only');
+  });
+
+  await runTest('Extensions', 'permissionMeta maps levels to labels and badges', () => {
+    const m = permissionMeta('read_only');
+    assertEquals(m.label, 'Read only');
+    assert(m.badge.length > 0);
+    assertEquals(permissionMeta('nope').label, 'nope');
   });
 
   await runTest('ToolRegistry', 'validates required parameters', () => {
@@ -563,6 +1491,83 @@ async function runAllTests() {
     assertEquals(state.config.characters.find(c => c.id === 'aria').name, 'Aria Prime');
   });
 
+  // ── Regression: NL extraction / parameter fixes ────────────────────────────
+  function localISO(n = 0) {
+    const d = new Date();
+    d.setDate(d.getDate() + n);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+
+  await runTest('Regression', '26. NL add_transaction extracts amount without corrupting description', async () => {
+    const res = await executeTool('add_transaction', 'Spent $16.50 on lunch at cafe', state, mainRegistry);
+    assert(res.text.includes('Recorded'), 'Should confirm recording');
+    assert(res.text.includes('16.5'), 'Amount should be 16.50');
+    assert(!res.text.includes('0 lunch'), 'Description must not start with leftover "0"');
+    assert(res.text.includes('lunch at cafe'), 'Description should preserve the semantic content');
+  });
+
+  await runTest('Regression', '27. NL add_todo strips colon prefix and parses due_date from NL', async () => {
+    const res = await executeTool('add_todo', 'add todo: buy milk', state, mainRegistry);
+    assert(res.text.includes('Added to-do'), 'Should confirm creation');
+    assert(res.text.includes('buy milk'), 'Task must not contain leading colon');
+    const todos = await testDb.getRecords(state.config.businesses[0].id, 'todos');
+    const milk = todos.find(t => t.data.task.includes('buy milk'));
+    assert(milk, 'New todo should be persisted');
+    assert(milk.data.due_date === localISO(0), `due_date should be today for bare "add todo" (${milk.data.due_date})`);
+
+    const res2 = await executeTool('add_todo', 'need to walk dog tomorrow', state, mainRegistry);
+    assert(res2.text.includes('Added to-do'), 'Should confirm second creation');
+    const todos2 = await testDb.getRecords(state.config.businesses[0].id, 'todos');
+    const dog = todos2.find(t => t.data.task.includes('walk dog'));
+    assert(dog, 'Second todo should be persisted');
+    assert(dog.data.due_date === localISO(1), `due_date should be tomorrow (${dog.data.due_date})`);
+  });
+
+  await runTest('Regression', '28. check_calendar filters out past events', async () => {
+    const bizId = state.config.businesses[0].id;
+    await testDb.addRecord(bizId, 'calendar_events', {
+      summary: 'Past Dinner', start: localISO(-1), end: localISO(-1), description: ''
+    });
+    await testDb.addRecord(bizId, 'calendar_events', {
+      summary: 'Future Breakfast', start: localISO(7), end: localISO(7), description: ''
+    });
+
+    const res = await executeTool('check_calendar', 'check calendar', state, mainRegistry);
+    assert(res.text.includes('Future Breakfast'), 'Must show upcoming event');
+    assert(!res.text.includes('Past Dinner'), 'Must not include past event in upcoming');
+  });
+
+  await runTest('Regression', '29. get_config redacts secret values', async () => {
+    const res = await mainRegistry.execute('get_config', { path: 'app.google.clientId' });
+    assert(res.text.includes('redacted'), 'Should indicate the value is redacted');
+    assert(!res.text.includes('hacked'), 'Must not leak a secret value');
+  });
+
+  await runTest('Regression', '30. update_config blocks writes to protected paths', async () => {
+    try {
+      const res = await mainRegistry.execute('update_config', {
+        path: 'app.google.clientId', value: 'hacked'
+      });
+      const ok = (res && res.error && /protected/i.test(String(res.error))) ||
+                 (res && res.text && /protected/i.test(String(res.text)));
+      assert(ok, 'Should report the path is protected');
+    } catch (e) {
+      assert(/protected/i.test(String(e.message)), 'Should throw protected error');
+    }
+    assert(state.config.app.google.clientId !== 'hacked', 'Protected path must remain unchanged');
+  });
+
+  await runTest('Regression', '31. NL add_event cleans summary and resolves tomorrow', async () => {
+    const res = await executeTool('add_event', 'schedule team meeting with Bob tomorrow', state, mainRegistry);
+    assert(res.text.includes('team meeting with Bob'), 'Should confirm event creation with clean summary');
+    const events = await testDb.getRecords(state.config.businesses[0].id, 'calendar_events');
+    const bob = events.find(e => e.data.summary.includes('team meeting') && e.data.summary.includes('Bob'));
+    assert(bob, 'Event should be persisted');
+    assert(!bob.data.summary.includes('schedule'), 'Summary must not contain scheduling verb');
+    assert(bob.data.start && [localISO(0), localISO(1)].includes(String(bob.data.start).slice(0, 10)),
+      `start should be today or tomorrow (${bob.data.start})`);
+  });
+
   // 9. Integration with executeTool engine (validates object/string handling & no crashing)
   await runTest('Integration', 'executeTool safely handles string queries', async () => {
     const res = await executeTool('list_todos', 'show my tasks', state, mainRegistry);
@@ -573,6 +1578,630 @@ async function runAllTests() {
     const res = await executeTool({ tool: 'list_todos', params: {} }, {}, state, mainRegistry);
     assert(res.text.includes('Tasks') || res.text.includes('todos'), 'executeTool handles object input without error');
   });
+
+  // ── Coverage expansion (Phase 2 hermetic) ─────────────────────────────────
+  // 9a. Pipeline hermetic (runPipeline, rankTools, routeToAgent)
+  // 9b. Backend fetch-mock tests (llamacpp / ollama / probeAllBackends)
+  // 9c. core/db.js edge cases (clearChat, searchSimilar null-emb, updateRecord/deleteRecord)
+  // 9d. ToolChain error paths
+  // 9e. configAPI export/import/reset/loadSavedConfig
+  // 9f. intent.js detectIntentRules direct branch coverage
+  // 9g. google.js readSheet & handleTokenResponse
+  // 9h. execute.js uncovered NL + fallback paths
+  // 9i. models.js getDeviceRecommendations with object profile + probeAllBackends exports
+  // 9j. core/tools.js registry validation
+
+  // ── 9a. Pipeline hermetic ─────────────────────────────────────────────────
+  await runTest('Pipeline', 'runPipeline data-tool path with list_todos runner', async () => {
+    const res = await runPipeline('list todos', {
+      state,
+      router: agentComm,
+      runner: async (intent, params, ctx) => ({ text: `Found ${ctx.records.length} to-dos.` })
+    });
+    assert(res.ok === true, 'pipeline should succeed for data-tool path');
+    assertEquals(res.intent, 'list_todos');
+    assert(typeof res.response === 'string' && res.response.length > 0, 'runner text should flow into response');
+    assert(res.warning && res.warning.code === 'E_DISABLED', 'warning should indicate models are off');
+  });
+
+  await runTest('Pipeline', 'runPipeline pure-chat path when models disabled', async () => {
+    const res = await runPipeline('Hello, how are you?', { state });
+    assert(res.ok === false, 'pipeline ok should be false for chat-only path');
+    assertEquals(res.response, null);
+    assert(res.error && res.error.code === 'E_DISABLED', 'error code should be E_DISABLED');
+  });
+
+  await runTest('Pipeline', 'runPipeline character switch changes active persona', async () => {
+    const origCharId = state.activeCharacterId;
+    try {
+      const res = await runPipeline('switch to marcus', { state, router: agentComm });
+      assertEquals(res.intent, 'character_switch');
+      assert(res.ok === true, 'character switch should succeed');
+      assert(typeof res.response === 'string' && res.response.includes('Marcus'), 'response mentions Marcus');
+    } finally {
+      state.activeCharacterId = origCharId;
+    }
+  });
+
+  await runTest('Pipeline', 'runPipeline delegation sets targetAgentId', async () => {
+    const res = await runPipeline('delegate to marcus: analyze expenses', {
+      state,
+      router: agentComm
+    });
+    assertEquals(res.params && res.params.targetAgentId, 'marcus');
+  });
+
+  await runTest('Pipeline', 'rankTools direct call returns empty array when models disabled', async () => {
+    const ranks = await rankTools('check my todos', state);
+    assert(Array.isArray(ranks) && ranks.length === 0, 'disabled models → empty rankTools');
+  });
+
+  await runTest('Pipeline', 'routeToAgent respects preferredAgentId option', async () => {
+    const result = await routeToAgent('anything', { state, router: agentComm, preferredAgentId: 'marcus' });
+    assertEquals(result.agentId, 'marcus');
+    assertEquals(result.source, 'rules');
+  });
+
+  await runTest('Pipeline', 'routeToAgent returns null agentId on empty roster', async () => {
+    const result = await routeToAgent('hello', { state: { config: { characters: [] } }, router: agentComm });
+    assertEquals(result.agentId, null);
+  });
+
+  await runTest('Pipeline', 'routeToAgent infer failure yields null agentId', async () => {
+    const result = await routeToAgent('x', { state, router: { getBestAgentForQuery: () => null } });
+    assertEquals(result.agentId, null);
+  });
+
+  await runTest('Pipeline', 'routeToAgent uses router.getBestAgentForQuery when no preferredAgentId', async () => {
+    const fakeRouter = { getBestAgentForQuery: (q) => ({ id: 'sage', name: 'Sage', systemPrompt: '' }) };
+    const result = await routeToAgent('pick the logic agent', { state, router: fakeRouter });
+    assertEquals(result.agentId, 'sage');
+  });
+
+  // ── 9b. Backend fetch-mock tests ──────────────────────────────────────────
+  if (isNode) {
+    await runTest('BackendMock', 'llamacpp embed returns Float32Array when enabled', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async (url) => ({
+          ok: true, json: async () => ({ data: [{ embedding: [0.1, 0.2, 0.3] }] })
+        });
+        const vec = await getBackend('llamacpp').embed('test');
+        assert(vec instanceof Float32Array && vec.length === 3, 'should return Float32Array of length 3');
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'llamacpp health reports ok when remote is reachable', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async () => ({ ok: true, json: async () => ({}) });
+        const h = await getBackend('llamacpp').health();
+        assert(h.ok === true, `expected ok true, got ${JSON.stringify(h)}`);
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'llamacpp generate yields text via async iterator', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async () => ({
+          ok: true, json: async () => ({ choices: [{ message: { content: 'Hello from llamacpp' } }] })
+        });
+        let text = '';
+        for await (const chunk of getBackend('llamacpp').generate({ messages: [{ role: 'user', content: 'hi' }] })) {
+          if (chunk.text) text += chunk.text;
+        }
+        assertEquals(text, 'Hello from llamacpp');
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'llamacpp generate yields tool_call chunk', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async () => ({
+          ok: true, json: async () => ({
+            choices: [{
+              message: {
+                tool_calls: [{ id: '1', type: 'function', function: { name: 'add_todo', arguments: '{"task":"x"}' } }]
+              }
+            }]
+          })
+        });
+        const chunks = [];
+        for await (const c of getBackend('llamacpp').generate({ messages: [{ role: 'user', content: 'hi' }] })) chunks.push(c);
+        assert(chunks.some(c => c.toolCall), 'should include a toolCall chunk');
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'llamacpp generate yields nothing on empty messages array', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async () => { throw new Error('should not be called'); };
+        const chunks = [];
+        for await (const c of getBackend('llamacpp').generate({ messages: [] })) chunks.push(c);
+        assertEquals(chunks.length, 0, 'empty messages should yield no chunks');
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'llamacpp health reports disabled when enabled false', async () => {
+      const h = await getBackend('llamacpp').health();
+      assertEquals(h.ok, false);
+      assert(h.detail.includes('disabled'), 'detail mentions disabled');
+    });
+
+    await runTest('BackendMock', 'llamacpp fetch throw makes health ok:false and generate throws ModelError', async () => {
+      const origLlmCfg = state.config.app.ai.backends.llamacpp;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.llamacpp = { ...origLlmCfg, enabled: true };
+        globalThis.fetch = async () => { throw new TypeError('fetch failed'); };
+        const h = await getBackend('llamacpp').health();
+        assertEquals(h.ok, false);
+        let threw = null;
+        try { for await (const _ of getBackend('llamacpp').generate({ messages: [{ role: 'user', content: 'hi' }] })) ; } catch (e) { threw = e; }
+        assert(threw instanceof ModelError && threw.code === 'E_INFER', `expected ModelError E_INFER, got ${threw?.constructor?.name} ${threw?.code}`);
+      } finally {
+        state.config.app.ai.backends.llamacpp = origLlmCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'ollama health detail includes model count', async () => {
+      const origOllCfg = state.config.app.ai.backends.ollama;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.ollama = { ...origOllCfg, enabled: true };
+        globalThis.fetch = async () => ({
+          ok: true, json: async () => ({ models: [{ name: 'qwen2.5:3b' }, { name: 'gemma3:4b' }] })
+        });
+        const h = await getBackend('ollama').health();
+        assert(h.ok === true, 'ok should be true');
+        assert(h.detail.includes('2 model'), `detail should mention 2 models, got: ${h.detail}`);
+      } finally {
+        state.config.app.ai.backends.ollama = origOllCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'ollama embed returns Float32Array', async () => {
+      const origOllCfg = state.config.app.ai.backends.ollama;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.ollama = { ...origOllCfg, enabled: true };
+        globalThis.fetch = async () => ({
+          ok: true, json: async () => ({ embedding: [0.5, 0.6, 0.7] })
+        });
+        const vec = await getBackend('ollama').embed('test');
+        assert(vec instanceof Float32Array && vec.length === 3, 'Float32Array length 3');
+      } finally {
+        state.config.app.ai.backends.ollama = origOllCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'ollama generate yields tool_call chunk', async () => {
+      const origOllCfg = state.config.app.ai.backends.ollama;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.ollama = { ...origOllCfg, enabled: true };
+        globalThis.fetch = async () => ({
+          ok: true, json: async () => ({
+            message: {
+              content: '',
+              tool_calls: [{ id: '1', type: 'function', function: { name: 'add_todo', arguments: '{"task":"y"}' } }]
+            }
+          })
+        });
+        const chunks = [];
+        for await (const c of getBackend('ollama').generate({ messages: [{ role: 'user', content: 'hi' }] })) chunks.push(c);
+        assert(chunks.some(c => c.toolCall), 'should yield toolCall chunk');
+      } finally {
+        state.config.app.ai.backends.ollama = origOllCfg;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'probeAllBackends returns llamacpp and ollama disabled entries when both are off', async () => {
+      resetHealthCache();
+      const results = await probeAllBackends();
+      const ids = results.map(r => r.id);
+      assert(ids.includes('llamacpp'), 'should include llamacpp');
+      assert(ids.includes('ollama'), 'should include ollama');
+      results.filter(r => r.id === 'llamacpp' || r.id === 'ollama').forEach(r => assertEquals(r.ok, false));
+    });
+  }
+
+  // ── 9c. core/db.js edge cases ─────────────────────────────────────────────
+  await runTest('Coverage/DB', 'clearChat removes chat for target business only', async () => {
+    const biz1 = 'personal';
+    const biz2 = 'business-ops';
+    await testDb.addChatMessage({ businessId: biz1, role: 'user', content: 'a1' });
+    await testDb.addChatMessage({ businessId: biz2, role: 'user', content: 'b1' });
+    await testDb.clearChat(biz1);
+    const chat1 = await testDb.getChat(biz1);
+    const chat2 = await testDb.getChat(biz2);
+    assertEquals(chat1.length, 0, 'target business chat cleared');
+    assert(chat2.length > 0, 'other business chat untouched');
+  });
+
+  await runTest('Coverage/DB', 'searchSimilar returns top-K records on null embedding and zero similarity on mismatched dims', async () => {
+    const biz = state.config.businesses[0].id;
+    const records = await testDb.getRecords(biz, 'transactions');
+    const s1 = await testDb.searchSimilar(biz, 'transactions', null, 2);
+    assertEquals(s1.length, Math.min(records.length, 2), 'null embedding → top-K records');
+    const s2 = await testDb.searchSimilar(biz, 'transactions', [0.1, 0.2], 5);
+    assert(s2.every(r => r._similarity === 0), 'mismatched dims → similarity 0');
+  });
+
+  await runTest('Coverage/DB', 'updateRecord throws on unknown id; deleteRecord works', async () => {
+    let threw = null;
+    try { await testDb.updateRecord('zzz-bogus', {}); } catch (e) { threw = e; }
+    assert(threw && /not found/i.test(threw.message), 'updateRecord unknown id throws');
+
+    const biz = state.config.businesses[0].id;
+    const { id } = await testDb.addRecord(biz, 'todos', { task: 'tmp' });
+    await testDb.deleteRecord(biz, 'todos', id);
+    const gone = await testDb.getRecordById(biz, 'todos', id);
+    assertEquals(gone, null, 'deleted record gone');
+  });
+
+  // ── 9d. ToolChain error paths ─────────────────────────────────────────────
+  await runTest('Coverage/ToolChain', 'empty chain throws; unresolved template passes through; soft-error stops on stopOnError', async () => {
+    const registry = new ToolRegistry();
+    registry.register({ name: 'fail', execute: async () => ({ error: 'boom' }) });
+    registry.register({ name: 'add', execute: async (p) => ({ val: (p.a || 0) + (p.b || 0) }) });
+    const chain = new ToolChain(registry);
+
+    let threw = null;
+    try { await chain.execute({}); } catch (e) { threw = e; }
+    assert(threw && /array with at least one step/i.test(threw.message), 'invalid chain throws');
+
+    const unresolved = await chain.execute({
+      steps: [{ tool: 'add', params: { a: 5, b: '{{x.y.z}}' } }]
+    });
+    const p = unresolved.results[0].result;
+    assert(p.val === '5{{x.y.z}}', `unresolved passthrough got: ${JSON.stringify(p)}`);
+
+    // soft-error: fail step returns {error} but chain still continues when stopOnError is false
+    const soft = await chain.execute({
+      steps: [
+        { tool: 'fail', params: {}, stopOnError: false },
+        { tool: 'add', params: { a: 2, b: 3 }, stopOnError: false }
+      ]
+    });
+    assertEquals(soft.results.length, 2);
+    assert(soft.results[0].result.error === 'boom', 'first step soft-failed');
+    assertEquals(soft.results[1].result.val, 5, 'second step still ran');
+
+    // abort: throwing step should stop chain
+    const throwRegistry = new ToolRegistry();
+    throwRegistry.register({ name: 'explode', execute: async () => { throw new Error('kaboom'); } });
+    throwRegistry.register({ name: 'after', execute: async () => ({ val: 1 }) });
+    let chainErr = null;
+    try { await new ToolChain(throwRegistry).execute({ steps: [{ tool: 'explode' }, { tool: 'after' }] }); } catch (e) { chainErr = e; }
+    assert(chainErr && /Chain failed/i.test(chainErr.message), 'throwing step aborts chain');
+  });
+
+  // ── 9e. core/config.js export/import/reset/loadSavedConfig ─────────────────
+  await runTest('Coverage/ConfigAPI', 'exportConfig roundtrips through importConfig', async () => {
+    const stubDb = { getKV: async () => null, setKV: async () => {}, deleteKV: async () => {} };
+    const cfg = new ConfigAPI(stubDb, { config: JSON.parse(JSON.stringify(state.config)) });
+    const json = await cfg.exportConfig();
+    const imported = await cfg.importConfig(json);
+    assertEquals(imported.success, true);
+    assertEquals(cfg.state.config.app.name, state.config.app.name);
+  });
+
+  await runTest('Coverage/ConfigAPI', 'importConfig rejects invalid JSON and missing required fields', async () => {
+    const stubDb = { getKV: async () => null, setKV: async () => {}, deleteKV: async () => {} };
+    const cfg = new ConfigAPI(stubDb, { config: JSON.parse(JSON.stringify(state.config)) });
+    const bad1 = await cfg.importConfig('not json at all');
+    assertEquals(bad1.success, false);
+    assert(typeof bad1.error === 'string' && bad1.error.length > 0, 'should have error message');
+    const bad2 = await cfg.importConfig(JSON.stringify({ app: {} }));
+    assertEquals(bad2.success, false);
+  });
+
+  await runTest('Coverage/ConfigAPI', 'resetConfig clears state and loadSavedConfig returns loaded:false when empty', async () => {
+    const kv = {};
+    const stubDb = {
+      getKV: async (k) => kv[k] ?? null,
+      setKV: async (k, v) => { kv[k] = v; },
+      deleteKV: async (k) => { delete kv[k]; }
+    };
+    const cfg = new ConfigAPI(stubDb, { config: JSON.parse(JSON.stringify(state.config)) });
+    await cfg.resetConfig();
+    assertEquals(cfg.state.config, null);
+    const loadRes = await cfg.loadSavedConfig();
+    assertEquals(loadRes.loaded, false);
+  });
+
+  await runTest('Coverage/ConfigAPI', 'loadSavedConfig returns loaded:true when config is in KV', async () => {
+    const savedConfig = JSON.parse(JSON.stringify(state.config));
+    const kv = { app_config: savedConfig };
+    const stubDb = {
+      getKV: async (k) => kv[k] ?? null,
+      setKV: async (k, v) => { kv[k] = v; },
+      deleteKV: async (k) => { delete kv[k]; }
+    };
+    const cfg = new ConfigAPI(stubDb, { config: JSON.parse(JSON.stringify(state.config)) });
+    const loadRes = await cfg.loadSavedConfig();
+    assertEquals(loadRes.loaded, true);
+    assertEquals(cfg.state.config.app.name, savedConfig.app.name);
+  });
+
+  // ── 9f. intent.js detectIntentRules direct branch coverage ─────────────────
+  const { detectIntentRules } = await import('./app/intent.js');
+
+  await runTest('Coverage/Intent', 'detectIntentRules routes JSON, delegation, ask, switch, phrases, and null', async () => {
+    const json = detectIntentRules('@add_todo {"task":"test"}', state);
+    assertEquals(json.tool, 'add_todo');
+
+    const del = detectIntentRules('delegate to marcus analyze expenses', state);
+    assertEquals(del.tool, 'delegate_to_agent');
+    assertEquals(del.params.targetAgentId, 'marcus');
+
+    const ask = detectIntentRules('ask aria what is my balance', state);
+    assertEquals(ask.tool, 'ask_agent');
+    assertEquals(ask.params.targetAgentId, 'aria');
+
+    const sw = detectIntentRules('switch to marcus', state);
+    assert(sw && sw.id === 'marcus', 'switch to marcus returns char object');
+
+    assertEquals(detectIntentRules('show calendar', state), 'check_calendar');
+    assertEquals(detectIntentRules('web search for transformers', state), 'web_search');
+    assertEquals(detectIntentRules('analyze expenses', state), 'analyze_expenses');
+    assertEquals(detectIntentRules('rollback config', state), 'rollback_config');
+    assertEquals(detectIntentRules('make a tool', state), 'create_tool');
+
+    assertEquals(detectIntentRules('I spent $30 on gas', state), 'add_transaction');
+    assertEquals(detectIntentRules('tell me about expense tracking', state), 'add_transaction');
+
+    assertEquals(detectIntentRules('just chatting', state), null);
+    assertEquals(detectIntentRules('', state), null);
+  });
+
+  // ── 9g. google.js readSheet & handleTokenResponse ──────────────────────────
+  if (isNode) {
+    await runTest('Coverage/Google', 'readSheet fetches values when authenticated and throws when not', async () => {
+      const origToken = state.token;
+      const origFetch = globalThis.fetch;
+      try {
+        googleAPI.setToken('tok123');
+        globalThis.fetch = async (url) => {
+          assert(String(url).includes('sheets.googleapis.com'), 'hits sheets API');
+          return { ok: true, json: async () => ({ values: [['a','b'],['c','d']] }) };
+        };
+        const values = await googleAPI.readSheet('s1', 'A1:B2');
+        assertEquals(values.length, 2);
+
+        globalThis.fetch = async () => ({ ok: false, status: 403, text: async () => 'denied' });
+        let err1 = null;
+        try { await googleAPI.readSheet('s1'); } catch (e) { err1 = e; }
+        assert(err1 && err1.message.includes('403'), 'error path surfaces status');
+
+        googleAPI.setToken(null);
+        let err2 = null;
+        try { await googleAPI.readSheet('s1'); } catch (e) { err2 = e; }
+        assert(err2 && /not authenticated/i.test(err2.message), 'not signed in throws');
+      } finally {
+        globalThis.fetch = origFetch;
+        state.token = origToken;
+      }
+    });
+
+    await runTest('Coverage/Google', 'handleTokenResponse stores access token via KV', async () => {
+      const origToken = state.token;
+      try {
+        googleAPI.handleTokenResponse({ access_token: 'abc123' });
+        assertEquals(googleAPI.getToken(), 'abc123');
+        assertEquals(await testDb.getKV('google_token'), 'abc123');
+      } finally {
+        state.token = origToken;
+        await testDb.deleteKV('google_token');
+      }
+    });
+
+    await runTest('Coverage/Google', 'handleTokenResponse silently surfaces auth error toast without throwing', async () => {
+      googleAPI.handleTokenResponse({ error: 'access_denied' });
+      assert(true, 'no throw on error response');
+    });
+  }
+
+  // ── 9h. execute.js NL extraction & fallback paths ─────────────────────────
+  await runTest('Coverage/Execute', 'NL create_schema, add_character, add_business extract entity names', async () => {
+    const schema = await executeTool('create_schema', 'create schema invoices2', state, mainRegistry);
+    assert(schema.text.includes('invoices2'), 'schema created from NL');
+    const chr = await executeTool('add_character', 'create a character named Splint', state, mainRegistry);
+    assert(chr.text.includes('Splint'), 'character added from NL');
+    const biz = await executeTool('add_business', 'create a workspace named Sandbox', state, mainRegistry);
+    assert(biz.text.includes('Sandbox'), 'workspace added from NL');
+  });
+
+  await runTest('Coverage/Execute', 'change_character_name rejects empty name and NL rename works', async () => {
+    const empty = await mainRegistry.execute('change_character_name', { name: '   ' });
+    assert(empty.text.includes('valid character name'), 'empty name rejected');
+    const nlRename = await executeTool('change_character_name', 'call you Nova', state, mainRegistry);
+    assert(nlRename.text.includes('Nova'), 'NL rename applied');
+    await configAPI.updateCharacter('aria', { name: 'Aria' });
+    assertEquals(state.config.characters.find(c => c.id === 'aria').name, 'Aria');
+  });
+
+  await runTest('Coverage/Execute', 'search no-match returns empty results text', async () => {
+    const res = await executeTool('search', 'search for nonexistent-invoice terms', state, mainRegistry);
+    assert(typeof res.text === 'string' && res.text.length > 0, 'NL search returns text');
+  });
+
+  await runTest('Coverage/Execute', 'route_to_specialist falls back to executeTool when specialist equals current persona', async () => {
+    const res = await mainRegistry.execute('route_to_specialist', { query: 'just saying hi' });
+    assert(typeof res.text === 'string', 'fallback returns text');
+  });
+
+  await runTest('Coverage/Execute', 'small_talk and unknown tool names handled gracefully when model disabled', async () => {
+    const st = await executeTool('small_talk', 'nice to see you', state, mainRegistry);
+    assert(st.text.length > 0, 'small talk handled');
+    const unk = await executeTool('definitely_not_a_tool', 'hi', state, mainRegistry);
+    assert(unk.text.length > 0, 'unknown tool handled');
+  });
+
+  // ── 9i. models.js getDeviceRecommendations with plain object profile ───────
+  await runTest('Coverage/Models', 'getDeviceRecommendations settles on a coherent profile and stages', async () => {
+    const recs = getDeviceRecommendations({ formFactor: 'desktop', deviceMemory: 16, hardwareConcurrency: 16, platform: 'linux', prefersReducedMotion: false });
+    assert(recs.tier, 'has a tier');
+    assert(Array.isArray(recs.stages) && recs.stages.length >= 4, 'all pipeline stages covered');
+    const settings = buildRecommendedModelSettings({ tier: recs.tier });
+    assert(settings && settings.pipeline && Array.isArray(settings.pipeline.stages), 'builds model settings object');
+  });
+
+  // ── 9j. core/tools.js ToolRegistry validation paths ───────────────────────
+  await runTest('Coverage/ToolRegistry', 'register rejects invalid tool; validateParams rejects missing/invalid types', async () => {
+    const reg = new ToolRegistry();
+    let threw = null;
+    try { reg.register({}); } catch (e) { threw = e; }
+    assert(threw && /Invalid tool definition/i.test(threw.message), 'invalid tool rejected');
+
+    reg.register({ name: 't', execute: async () => {}, schema: { parameters: { n: { type: 'number', required: true }, s: { type: 'string', required: true } } } });
+    let v1 = null;
+    try { reg.validateParams(reg.getTool('t').schema, { n: 1 }); } catch (e) { v1 = e; }
+    assert(v1 && /missing/i.test(v1.message), 'missing required param throws');
+    let v2 = null;
+    try { reg.validateParams(reg.getTool('t').schema, { n: 'not a number', s: 'ok' }); } catch (e) { v2 = e; }
+    assert(v2 && /must be a number/i.test(v2.message), 'wrong type throws');
+    let v3 = null;
+    try { reg.validateParams(reg.getTool('t').schema, { n: 1, s: 42 }); } catch (e) { v3 = e; }
+    assert(v3 && /must be a string/i.test(v3.message), 'wrong string type throws');
+    let v4 = null;
+    try { await reg.registerToolFromAI({ description: 'nope', code: 'return {}' }, testDb); } catch (e) { v4 = e; }
+    assert(v4 && /must specify name and code/i.test(v4.message), 'registerToolFromAI rejects missing name');
+  });
+
+  // ── 9k. routing.js auto-resolution branches ───────────────────────────────
+  await runTest('Routing', 'resolveBackendForStage auto returns first enabled backend; cached failures fall through to transformers', async () => {
+    const origRouting = JSON.parse(JSON.stringify(state.config.app.ai.routing || {}));
+    const origLlm = state.config.app.ai.backends.llamacpp;
+    const origOll = state.config.app.ai.backends.ollama;
+    const origFetch = globalThis.fetch;
+    try {
+      state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto', intent: 'auto', tagger: 'auto' };
+      state.config.app.ai.backends.llamacpp = { ...origLlm, enabled: true };
+      state.config.app.ai.backends.ollama = { ...origOll, enabled: true };
+      globalThis.fetch = async () => { throw new TypeError('no server'); };
+      resetHealthCache();
+      const first = resolveBackendForStage('dialog');
+      assert(first.id === 'ollama', `auto without cache → first priority enabled backend, got ${first.id}`);
+      // populate cache with ok:false (via probeHealth catch path 41-42 when fetch throws)
+      const probes = await probeAllBackends();
+      probes.filter(r => r.id === 'llamacpp' || r.id === 'ollama').forEach(r => assertEquals(r.ok, false));
+      // resolveBackendForStage now sees cached failures → should skip both → transformers
+      const after = resolveBackendForStage('dialog');
+      assertEquals(after.id, 'transformers', 'cached failures → transformers fallback');
+      state.config.app.ai.routing.dialog = 'transformers';
+      assertEquals(resolveBackendForStage('dialog').id, 'transformers');
+      state.config.app.ai.routing.dialog = 'bogus';
+      assertEquals(resolveBackendForStage('dialog').id, 'transformers');
+    } finally {
+      state.config.app.ai.routing = origRouting;
+      state.config.app.ai.backends.llamacpp = origLlm;
+      state.config.app.ai.backends.ollama = origOll;
+      globalThis.fetch = origFetch;
+      resetHealthCache();
+    }
+  });
+
+  // ── end coverage expansion ─────────────────────────────────────────────────
+
+  // 10. Real-Model Integration (Node only; skipped with AIWS_SKIP_MODEL_TESTS=1)
+  if (isNode && !AIWS_SKIP_MODEL_TESTS) {
+    delete process.env.MODELS_DISABLED;
+    await unloadAll();
+    console.log('\n🤖 Real-model integration suite: loading the actual small models');
+    console.log('   (first run downloads weights into .cache/transformers; later runs are cached)');
+
+    await runTest('ModelsReal', 'preloadModels warms all 4 configured stages from cache/network', async () => {
+      const summary = await preloadModels({ loud: false });
+      assertEquals(summary.total, PIPELINE_STAGES && Object.keys(PIPELINE_STAGES).length, 'Should target all 4 stages');
+      assertEquals(summary.disabled, false);
+      assertEquals(summary.errors.length, 0, `preload errors: ${JSON.stringify(summary.errors)}`);
+    });
+
+    await runTest('ModelsReal', 'embedText returns a real 384-dim vector', async () => {
+      const v = await embedText('AI Workspace Pro — manage tasks, expenses, and events');
+      assert(Array.isArray(v) && v.length === 384, `Expected 384-dim vector, got ${Array.isArray(v) ? v.length : typeof v}`);
+      assert(v.some(x => x !== 0), 'Vector should contain non-zero values');
+    });
+
+    await runTest('ModelsReal', 'computeEmbedding produces retrievable embedding for records', async () => {
+      const v = await computeEmbedding('transactions', { description: 'Groceries at Safeway', category: 'food', amount: 12 });
+      assert(Array.isArray(v) && v.length > 0, 'Should produce a real embedding');
+    });
+
+    await runTest('ModelsReal', 'classifyIntent classifies with a real zero-shot model', async () => {
+      const res = await classifyIntent('please add a todo to review the quarterly report', state, { threshold: 0.05 });
+      assertEquals(res.source, 'model');
+      assert(typeof res.intent === 'string' && INTENT_LABELS.includes(res.intent),
+        `Expected a valid intent label, got ${JSON.stringify(res.intent)}`);
+    });
+
+    await runTest('ModelsReal', 'extractEntities extracts a real $ amount', async () => {
+      const res = await extractEntities('Spent $12 on coffee at the corner cafe', state);
+      assertEquals(res.params.amount, 12);
+    });
+
+    await runTest('ModelsReal', 'generateResponse returns a real, non-degenerate reply', async () => {
+      const text = await generateResponse({
+        intent: 'add_todo',
+        message: 'add todo: buy milk',
+        result: { text: '🆕 Added to-do: buy milk' },
+        params: { task: 'buy milk' },
+        persona: 'You are a helpful assistant.'
+      });
+      assert(typeof text === 'string' && text.length >= 3 && !/^(ok|done|yes|no|\.+)$/i.test(text), `Unexpected reply: ${text}`);
+    });
+
+    await runTest('ModelsReal', 'runPipeline orchestrates a real end-to-end data request', async () => {
+      const resultText = '💸 Added 4.50 transaction for coffee (personal · food).';
+      const res = await runPipeline('Spent $4.50 on coffee', {
+        state,
+        router: agentComm,
+        runner: async () => ({ text: resultText })
+      });
+      assert(typeof res.intent === 'string' && INTENT_LABELS.includes(res.intent),
+        `Expected a valid intent, got ${JSON.stringify(res.intent)}`);
+      assertEquals(res.params.amount, 4.5);
+      assertEquals(res.ok, true);
+      assert(typeof res.response === 'string' && res.response.length >= 3, 'Dialog stage should produce a reply');
+      assert(res.response !== resultText, 'Dialog reply must not be the raw data text (real generation)');
+    });
+  } else if (isNode) {
+    console.log('\n🤖 Real-model integration suite: SKIPPED (AIWS_SKIP_MODEL_TESTS=1 or MODELS_DISABLED at launch)');
+  }
+
+  // Restore hermetic env so any post-suite path stays deterministic.
+  if (isNode) process.env.MODELS_DISABLED = '1';
 
   // Summary
   console.log('\n════════════════════════════════════════════════════════════');

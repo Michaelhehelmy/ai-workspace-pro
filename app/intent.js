@@ -136,6 +136,16 @@ export function detectIntentRules(message, stateInstance = state) {
     };
   }
 
+  // 2b. Character name changes (deterministic so weak models can't misroute)
+  const nameChange = raw.match(
+    /(?:change|rename|set)\s+(?:your(?:self)?'?s?)?\s*name\s*(?:to|as)?\s+([a-z][a-z0-9 _-]{1,32})/i
+  ) || raw.match(
+    /(?:call yourself|rename yourself|your name is now|you(?:'re| are) now (?:called|known as)|you shall (?:be|henceforth be) known as|from now on (?:your name is|call you|be called))\s+([a-z][a-z0-9 _-]{1,32})/i
+  );
+  if (nameChange) {
+    return { tool: 'change_character_name', params: { name: nameChange[1].trim() } };
+  }
+
   // 3. Character / business switching
   if (/switch (to )?character|set character|use character|switch to /.test(value) && config) {
     const ch = (config.characters || []).find(c => value.includes((c.name || '').toLowerCase()));

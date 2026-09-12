@@ -200,6 +200,14 @@ export class WorkspaceDB {
     });
   }
 
+  async deleteRecordsByBusiness(businessId) {
+    const all = Array.from(this.memoryStores.records.values());
+    const ids = all.filter(r => r.businessId === businessId).map(r => r.id);
+    for (const id of ids) {
+      await this.deleteRecord(id);
+    }
+  }
+
   async addChatMessage(msg) {
     const chatMsg = {
       id: msg.id || 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
@@ -223,6 +231,56 @@ export class WorkspaceDB {
   async getChat(businessId) {
     const all = Array.from(this.memoryStores.chat.values());
     return all.filter(m => m.businessId === businessId).sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  /**
+   * Atomically replace a business's entire chat log (used by session
+   * compaction). Mirrors to memory first, then rebuilds the IndexedDB store for
+   * that business.
+   */
+  async replaceChat(businessId, messages) {
+    const next = Array.isArray(messages) ? messages : [];
+    for (const [id, m] of this.memoryStores.chat.entries()) {
+      if (m.businessId === businessId) this.memoryStores.chat.delete(id);
+    }
+    for (const m of next) {
+      const chatMsg = {
+        id: m.id || 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),
+        ...m,
+        businessId: m.businessId || businessId,
+        timestamp: m.timestamp || Date.now()
+      };
+      this.memoryStores.chat.set(chatMsg.id, chatMsg);
+    }
+    if (!this.db) return Promise.resolve();
+    return new Promise(resolve => {
+      try {
+        const tx = this.db.transaction('chat', 'readwrite');
+        const store = tx.objectStore('chat');
+        const idx = store.index('by_biz');
+        const delReq = idx.openKeyCursor(IDBKeyRange.only(businessId));
+        delReq.onsuccess = () => {
+          const cursor = delReq.result;
+          if (cursor) {
+            store.delete(cursor.primaryKey);
+            cursor.continue();
+          } else {
+            for (const m of next) {
+              store.add({
+                id: m.id,
+                ...m,
+                businessId: m.businessId || businessId,
+                timestamp: m.timestamp || Date.now()
+              });
+            }
+            resolve();
+          }
+        };
+        delReq.onerror = () => resolve();
+      } catch (e) {
+        resolve();
+      }
+    });
   }
 
   async clearChat(businessId) {

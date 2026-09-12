@@ -1,0 +1,14 @@
+{
+  "name": "ai-workspace-pro",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-11",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "./",
+    "binding": "ASSETS",
+    "run_worker_first": true,
+    "not_found_handling": "single-page-application"
+  }
+}

@@ -1,0 +1,21 @@
+# Files that must NOT be uploaded as static assets
+node_modules/
+.cache/
+.git/
+.wrangler/
+worker/
+skills/
+AGENTS.md
+CHANGELOG.md
+LICENSE
+README.md
+package.json
+package-lock.json
+privacy.md
+preseed.sh
+database.db*
+test.html
+test.js
+wrangler.jsonc
+wrangler.toml
+worker-configuration.d.ts
