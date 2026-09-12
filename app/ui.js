@@ -538,7 +538,7 @@ export function renderModelsPanel() {
       if (tierEl) {
         tierEl.style.display = '';
         tierEl.textContent = `${String(detectedDevice.tier).toUpperCase()} device · ${detectedDevice.score}`;
-        tierEl.className = `badge text-bg-${detectedDevice.tier === 'low' ? 'warning' : detectedDevice.tier === 'mid' ? 'info' : 'success'}`;
+        tierEl.className = `badge text-bg-${detectedDevice.tier === 'low' ? 'warning' : detectedDevice.tier === 'mid' ? 'info' : detectedDevice.tier === 'ultra' ? 'primary' : 'success'}`;
       }
       if (profileEl) profileEl.textContent = describeDevice(detectedDevice);
       if (recListEl) {

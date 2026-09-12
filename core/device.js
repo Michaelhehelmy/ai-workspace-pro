@@ -4,9 +4,9 @@
  * All probes are injectable for hermetic testing.
  */
 
-export const DEVICE_TIERS = Object.freeze({ LOW: 'low', MID: 'mid', HIGH: 'high' });
+export const DEVICE_TIERS = Object.freeze({ LOW: 'low', MID: 'mid', HIGH: 'high', ULTRA: 'ultra' });
 
-const TIER_ORDER = [DEVICE_TIERS.LOW, DEVICE_TIERS.MID, DEVICE_TIERS.HIGH];
+const TIER_ORDER = [DEVICE_TIERS.LOW, DEVICE_TIERS.MID, DEVICE_TIERS.HIGH, DEVICE_TIERS.ULTRA];
 
 /** Approximate size multiplier vs listed q8 size (listed = q8 baseline) */
 const DTYPE_MEM_FACTOR = Object.freeze({ q8: 1.0, int8: 0.55, uint8: 0.55, fp16: 1.6, fp32: 3.2 });
@@ -16,6 +16,7 @@ const TIER_BUDGET_MB = Object.freeze({
   low:  { ideal: 200, heavy: 400 },
   mid:  { ideal: 350, heavy: 700 },
   high: { ideal: 1000, heavy: 2400 },
+  ultra:{ ideal: 3500, heavy: 8000 },
 });
 
 /** Default catalog recommendation table keyed by tier + pipeline stage */
@@ -39,6 +40,13 @@ const RECOMMENDATION_TABLE = Object.freeze({
     intent:  'Xenova/distilbert-base-uncased-mnli',
     tagger:  'Xenova/bert-base-NER',
     dialog:  'Xenova/TinyLlama-1.1B-Chat-v1.0',
+    dtype:   'q8',
+  },
+  ultra: {
+    encoder: 'Xenova/bge-large-en-v1.5',
+    intent:  'Xenova/deberta-v3-large-mnli',
+    tagger:  'Xenova/bert-large-NER',
+    dialog:  'Xenova/llama-3.2-3B-Instruct',
     dtype:   'q8',
   },
 });
@@ -143,7 +151,8 @@ function scoreDeviceRaw(formFactor, gpuKind, cores, memoryMb, wasmSimd, wasm) {
 function scoreToTier(score) {
   if (score < 45) return DEVICE_TIERS.LOW;
   if (score < 70) return DEVICE_TIERS.MID;
-  return DEVICE_TIERS.HIGH;
+  if (score < 90) return DEVICE_TIERS.HIGH;
+  return DEVICE_TIERS.ULTRA;
 }
 
 /** Grade a model against device budget. Returns { score, verdict, reason } */
@@ -196,7 +205,9 @@ export function recommendModelSet(profile, catalog) {
     tier,
     dtype: table.dtype,
     stages: Object.freeze(stages),
-    memory: Object.freeze({ wasmThreads: profile.tier === DEVICE_TIERS.HIGH ? 8 : profile.tier === DEVICE_TIERS.MID ? 4 : 2 }),
+    memory: Object.freeze({
+      wasmThreads: profile.tier === DEVICE_TIERS.ULTRA ? 16 : profile.tier === DEVICE_TIERS.HIGH ? 8 : profile.tier === DEVICE_TIERS.MID ? 4 : 2
+    }),
     notes: `Recommended for ${tier}-tier (${profile.cores} cores${profile.memoryMb ? ', ' + (profile.memoryMb / 1024).toFixed(0) + ' GB' : ''}${profile.gpuKind !== 'none' ? ', ' + profile.gpuKind : ''})`,
   });
 }

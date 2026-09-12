@@ -1022,8 +1022,8 @@ async function runAllTests() {
       battery: () => null
     };
     const profile = detectDevice(probes);
-    assert(profile.tier === DEVICE_TIERS.HIGH, `expected high tier, got ${profile.tier} (${profile.score})`);
-    assert(profile.score >= 70, `expected score >= 70, got ${profile.score}`);
+    assert(profile.tier === DEVICE_TIERS.ULTRA, `expected ultra tier, got ${profile.tier} (${profile.score})`);
+    assert(profile.score >= 90, `expected score >= 90, got ${profile.score}`);
     assertEquals(profile.gpuKind, 'webgpu');
   });
 
@@ -1046,7 +1046,7 @@ async function runAllTests() {
 
   await runTest('Device', 'recommendModelSet selects small models on low tier and larger on high', () => {
     const low = detectDevice({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
-    const high = detectDevice({ formFactor: () => 'desktop', cores: () => 16, memoryMb: () => 16384, gpu: () => 'WebGPU', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
+    const high = detectDevice({ formFactor: () => 'desktop', cores: () => 8, memoryMb: () => 8192, gpu: () => 'WebGL2', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
     const planLow = recommendModelSet(low);
     const planHigh = recommendModelSet(high);
     assert(planLow.tier === 'low' && planLow.dtype, 'low plan should carry tier and dtype');
@@ -1054,6 +1054,23 @@ async function runAllTests() {
     assert(planHigh.stages.encoder.model.includes('bge-base'), `high tier should pick bge-base, got ${planHigh.stages.encoder.model}`);
     assert(planLow.stages.encoder.model.includes('MiniLM-L6'), `low tier should pick MiniLM-L6, got ${planLow.stages.encoder.model}`);
     assert(planHigh.notes.length > 0 && planLow.notes.length > 0, 'notes should be present');
+  });
+
+  await runTest('Device', 'recommendModelSet steps up to higher models on an ultra device', () => {
+    const ultra = detectDevice({ formFactor: () => 'desktop', cores: () => 16, memoryMb: () => 16384, gpu: () => 'WebGPU', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
+    assert(ultra.tier === 'ultra', `16-core/16GB/WebGPU desktop should be ultra, got ${ultra.tier}`);
+    const plan = recommendModelSet(ultra);
+    const catalog = getModelCatalog();
+    for (const key of ['encoder', 'intent', 'tagger', 'dialog']) {
+      const id = plan.stages[key].model;
+      const meta = catalog.find(m => m.id === id);
+      assert(!!meta, `ultra ${key} rec ${id} must exist in the catalog`);
+      assert(typeof meta.sizeMb === 'number', `ultra ${key} rec ${id} must carry a size`);
+    }
+    assert(plan.stages.encoder.model.includes('bge-large'), `ultra encoder should be bge-large, got ${plan.stages.encoder.model}`);
+    const dlgSize = catalog.find(m => m.id === plan.stages.dialog.model).sizeMb;
+    assert(dlgSize >= 3000, `ultra dialog should be a 3B+ model, got ${plan.stages.dialog.model} (${dlgSize}MB)`);
+    assert(plan.memory.wasmThreads === 16, `ultra should get 16 wasm threads, got ${plan.memory.wasmThreads}`);
   });
 
   await runTest('Device', 'getModelFit grades models against device budget', () => {
