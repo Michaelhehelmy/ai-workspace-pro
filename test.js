@@ -2509,6 +2509,29 @@ async function runAllTests() {
       }
     });
 
+    await runTest('Init', 'loadConfiguration merges a saved config but keeps newly shipped models and user overrides', async () => {
+      const origConfig = state.config;
+      const origIssues = state.configIssues;
+      try {
+        const trimmed = (state.config.modelSettings.availableModels || []).slice(0, 3);
+        trimmed.push({ id: 'Xenova/user-custom-model', name: 'User Custom', sizeMb: 1 });
+        await configAPI.updateConfig('modelSettings.availableModels', trimmed);
+        await configAPI.updateConfig('modelSettings.dtype', 'fp16');
+
+        const res = await loadConfiguration();
+        const catalog = res.config.modelSettings.availableModels || [];
+        assert(catalog.some(m => m.id === 'Xenova/bge-large-en-v1.5'), 'shipped ultra embedder must re-appear from disk catalog');
+        assert(catalog.some(m => m.id === 'Xenova/llama-3.2-3B-Instruct'), 'shipped ultra generator must re-appear from disk catalog');
+        assert(catalog.some(m => m.id === 'Xenova/user-custom-model'), 'user-added model must be preserved');
+        assert(catalog.length >= 32, `catalog restored to full size, got ${catalog.length}`);
+        assert(res.config.modelSettings.dtype === 'fp16', 'user dtype override must survive the merge');
+      } finally {
+        await configAPI.resetConfig().catch(() => {});
+        state.config = origConfig;
+        state.configIssues = origIssues;
+      }
+    });
+
     await runTest('Init', 'init wires core tools into the shared registry and is idempotent', async () => {
       const origConfig = state.config;
       const origChar = state.activeCharacterId;

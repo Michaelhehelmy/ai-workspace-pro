@@ -18,6 +18,16 @@ import { composeToolText, generateChatResponse, routeToAgent } from './pipeline.
 import { setCharacterEmotion } from './ui.js';
 import { extensionRegistry, applyBuiltinExtensions } from '../core/extensions.js';
 
+let workerAPIProbe = null;
+function hasWorkerAPI() {
+  if (!workerAPIProbe) {
+    workerAPIProbe = fetch('/api/health', { cache: 'no-store' })
+      .then(r => r.ok)
+      .catch(() => false);
+  }
+  return workerAPIProbe;
+}
+
 export async function executeTool(toolIdentifier, rawInput, stateInstance = state, registryInstance = toolRegistry) {
   let actualToolName = '';
   let params = {};
@@ -842,11 +852,14 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
         // In the browser the cross-origin DuckDuckGo API is CORS-blocked, so
         // route through the same-origin worker proxy (/api/web/search). In
         // Node there is no same-origin policy, so talk to DuckDuckGo directly.
-        // When no worker is present (bare static hosting) the relative call
-        // fails fast and the catch below renders a graceful inline fallback
-        // instead of a swallowed CORS error.
+        // When no worker is present (bare static hosting such as python's
+        // http.server) a one-time /api/health probe detects this and we skip
+        // the proxy (no 404 noise in the console), rendering a graceful
+        // inline fallback instead of a swallowed CORS error.
         const res = isBrowser
-          ? await fetch(`/api/web/search?q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } })
+          ? (await hasWorkerAPI()
+              ? await fetch(`/api/web/search?q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } })
+              : null)
           : await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`);
         if (!res.ok) throw new Error(`Search backend responded with ${res.status}`);
         const data = await res.json();

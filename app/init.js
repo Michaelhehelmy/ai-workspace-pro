@@ -18,39 +18,94 @@ export const googleAPI = new GoogleAPI(state, db);
 
 export async function loadConfiguration() {
   try {
-    const saved = await configAPI.loadSavedConfig();
+    // The canonical config always comes from the shipped config.json so
+    // catalog additions (new models) reach existing users; the persisted
+    // user config (IndexedDB) still wins for every other setting.
+    let configData = null;
+    if (isBrowser) {
+      const resp = await fetch('config.json');
+      configData = await resp.json();
+    } else {
+      const { createRequire } = await import('module');
+      const require = createRequire(import.meta.url);
+      try {
+        configData = require('../config.json');
+      } catch (e) {
+        configData = null;
+      }
+    }
+
+    const saved = await loadSavedConfigSafe();
     if (saved && saved.loaded) {
-      await applyRuntimeOverrides(state.config);
-      validateConfig(state.config);
-      state.configIssues = collectConfigIssues(state.config);
-      return state;
+      // loadSavedConfig assigns the persisted config to state.config
+      configData = mergeConfig(configData || state.config, state.config);
     }
+
+    if (configData) {
+      await applyRuntimeOverrides(configData);
+      validateConfig(configData);
+      state.config = configData;
+    }
+
+    state.configIssues = state.config ? collectConfigIssues(state.config) : [];
+    return state;
   } catch (e) {
-    console.warn('Failed to load saved config:', e);
+    console.warn('Failed to load configuration:', e);
+    state.configIssues = state.config ? collectConfigIssues(state.config) : [];
+    return state;
   }
+}
 
-  let configData = null;
-  if (isBrowser) {
-    const resp = await fetch('config.json');
-    configData = await resp.json();
-  } else {
-    const { createRequire } = await import('module');
-    const require = createRequire(import.meta.url);
-    try {
-      configData = require('../config.json');
-    } catch (e) {
-      configData = null;
+/**
+ * Merge the shipped (disk) config with a persisted user config. User settings
+ * win everywhere EXCEPT modelSettings.availableModels, which is a union of the
+ * two keyed by model id — shipped entries keep their id, name, and size so
+ * freshly-added models (and updated sizes) always appear in the Models tab,
+ * while user-added custom models are preserved.
+ */
+function mergeConfig(disk, saved) {
+  if (!disk) return saved;
+  if (!saved) return disk;
+  const out = deepClone(disk);
+  overlay(out, saved);
+  const diskModels = (disk.modelSettings && Array.isArray(disk.modelSettings.availableModels)) ? disk.modelSettings.availableModels : [];
+  const savedModels = (saved.modelSettings && Array.isArray(saved.modelSettings.availableModels)) ? saved.modelSettings.availableModels : [];
+  if (Array.isArray(out.modelSettings)) out.modelSettings = {};
+  if (!out.modelSettings || typeof out.modelSettings !== 'object') out.modelSettings = {};
+  out.modelSettings.availableModels = unionModels(diskModels, savedModels);
+  return out;
+}
+
+function deepClone(v) {
+  return v == null ? v : JSON.parse(JSON.stringify(v));
+}
+
+async function loadSavedConfigSafe() {
+  try {
+    return await configAPI.loadSavedConfig();
+  } catch (e) {
+    console.warn('Ignoring unreadable saved config:', e);
+    return { success: true, loaded: false };
+  }
+}
+
+function overlay(target, patch) {
+  if (target == null || typeof target !== 'object') return;
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      if (!target[k] || typeof target[k] !== 'object' || Array.isArray(target[k])) target[k] = {};
+      overlay(target[k], v);
+    } else {
+      target[k] = v;
     }
   }
+}
 
-  if (configData) {
-    await applyRuntimeOverrides(configData);
-    validateConfig(configData);
-    state.config = configData;
-  }
-
-  state.configIssues = state.config ? collectConfigIssues(state.config) : [];
-  return state;
+function unionModels(shipped, saved) {
+  const byId = new Map();
+  for (const m of shipped) if (m && m.id) byId.set(m.id, m);
+  for (const m of saved) if (m && m.id && !byId.has(m.id)) byId.set(m.id, m);
+  return Array.from(byId.values());
 }
 
 export async function init() {
