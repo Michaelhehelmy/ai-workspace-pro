@@ -327,6 +327,13 @@
         "type": "generator",
         "description": "Google's instruction-tuned model (780M params)",
         "sizeMb": 410
+      },
+      {
+        "id": "Xenova/TinyLlama-1.1B-Chat-v1.0",
+        "name": "TinyLlama 1.1B Chat",
+        "type": "generator",
+        "description": "Compact 1.1B-param Llama-family chat model — good quality for the size",
+        "sizeMb": 1150
       }
     ]
   }

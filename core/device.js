@@ -15,7 +15,7 @@ const DTYPE_MEM_FACTOR = Object.freeze({ q8: 1.0, int8: 0.55, uint8: 0.55, fp16:
 const TIER_BUDGET_MB = Object.freeze({
   low:  { ideal: 200, heavy: 400 },
   mid:  { ideal: 350, heavy: 700 },
-  high: { ideal: 800, heavy: 1200 },
+  high: { ideal: 1000, heavy: 2400 },
 });
 
 /** Default catalog recommendation table keyed by tier + pipeline stage */
@@ -36,9 +36,9 @@ const RECOMMENDATION_TABLE = Object.freeze({
   },
   high: {
     encoder: 'Xenova/bge-base-en-v1.5',
-    intent:  'Xenova/mobilebert-uncased-mnli',
+    intent:  'Xenova/distilbert-base-uncased-mnli',
     tagger:  'Xenova/bert-base-NER',
-    dialog:  'Xenova/LaMini-Flan-T5-248M',
+    dialog:  'Xenova/TinyLlama-1.1B-Chat-v1.0',
     dtype:   'q8',
   },
 });
