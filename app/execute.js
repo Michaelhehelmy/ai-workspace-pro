@@ -839,8 +839,16 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
     execute: async (params) => {
       const q = params.query;
       try {
-        const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`);
-        if (!res.ok) throw new Error(`DuckDuckGo responded with ${res.status}`);
+        // In the browser the cross-origin DuckDuckGo API is CORS-blocked, so
+        // route through the same-origin worker proxy (/api/web/search). In
+        // Node there is no same-origin policy, so talk to DuckDuckGo directly.
+        // When no worker is present (bare static hosting) the relative call
+        // fails fast and the catch below renders a graceful inline fallback
+        // instead of a swallowed CORS error.
+        const res = isBrowser
+          ? await fetch(`/api/web/search?q=${encodeURIComponent(q)}`, { headers: { Accept: 'application/json' } })
+          : await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`);
+        if (!res.ok) throw new Error(`Search backend responded with ${res.status}`);
         const data = await res.json();
         const results = [];
         if (data.Abstract) results.push(`**Abstract:** ${data.Abstract}`);

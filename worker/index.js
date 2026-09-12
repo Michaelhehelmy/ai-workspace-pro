@@ -42,6 +42,35 @@ export default {
       });
     }
 
+    // Server-side search proxy. The DuckDuckGo Instant Answer API sends no
+    // CORS headers, so a direct browser fetch is blocked by the same-origin
+    // policy. Proxying here keeps the on-device app working when hosted on
+    // this Worker; the browser tool falls back to a graceful inline result
+    // when this endpoint is absent (e.g. bare static hosting).
+    if (request.method === 'GET' && pathname === '/api/web/search') {
+      const q = (url.searchParams.get('q') || '').trim();
+      if (!q) return json({ ok: false, error: 'Missing "q" query parameter' }, 400);
+      const upstream = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=0`;
+      try {
+        const res = await fetch(upstream);
+        if (!res.ok) {
+          return json({ ok: false, error: `Upstream search failed with ${res.status}` }, 502);
+        }
+        const raw = await res.text();
+        const body = raw.trim() ? raw : '{}';
+        return new Response(body, {
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'public, max-age=300',
+            'access-control-allow-origin': '*',
+          },
+        });
+      } catch (err) {
+        return json({ ok: false, error: (err && err.message) ? err.message : 'Upstream search unavailable' }, 502);
+      }
+    }
+
     if (pathname.startsWith('/api/')) {
       return json({ ok: false, error: 'Not found', path: pathname }, 404);
     }
