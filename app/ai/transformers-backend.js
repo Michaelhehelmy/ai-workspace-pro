@@ -257,9 +257,28 @@ function toModelError(err, stageDef, modelId) {
 // instead of a console full of blocked-request errors. Browser-only (Node
 // loads from the local cache); results are memoized for the session.
 const _hubCheck = new Map();
+
+/** True when the model's files are already in browser Cache Storage. */
+async function hubModelCached(modelId) {
+  if (typeof caches === 'undefined' || typeof caches.keys !== 'function') return false;
+  const probeUrl = 'https://huggingface.co/' + modelId + '/resolve/main/config.json';
+  try {
+    const names = await caches.keys();
+    for (const name of names) {
+      const cache = await caches.open(name);
+      if (await cache.match(probeUrl)) return true;
+    }
+  } catch (_) {}
+  return false;
+}
+
 async function ensureModelReachable(stageKey, modelId) {
   if (!isBrowser) return;
   if (!/^[A-Za-z0-9._/-]+$/.test(String(modelId))) return;
+  if (!_hubCheck.has('ok:' + modelId) && await hubModelCached(modelId)) {
+    _hubCheck.set('ok:' + modelId, true);
+    return;
+  }
   const key = stageKey + ':' + modelId;
   if (_hubCheck.has(key)) return _hubCheck.get(key);
   const probe = (async () => {
