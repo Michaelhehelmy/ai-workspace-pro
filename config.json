@@ -455,11 +455,11 @@
             "sizeMb": 1070
           },
           {
-            "id": "onnx-community/gemma-3-1b-it-ONNX",
-            "name": "Gemma 3 1B IT (ONNX)",
+            "id": "Xenova/bloomz-560m",
+            "name": "BLOOMZ 560M",
             "type": "generator",
-            "description": "Google's Gemma 3 1B instruct chat model (ONNX build)",
-            "sizeMb": 1070
+            "description": "BigScience multilingual instruction-tuned model (stable official build)",
+            "sizeMb": 590
           }
     ]
   }

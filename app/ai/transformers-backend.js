@@ -249,6 +249,59 @@ function toModelError(err, stageDef, modelId) {
   );
 }
 
+// ── Hugging Face Hub reachability guard ──────────────────────────────────────
+// A catalog id that 404s on the Hub surfaces as baffling CORS noise in the
+// browser, because error responses omit `Access-Control-Allow-Origin`. Fetch a
+// missing model once before loading it: the JSON API sends CORS headers on
+// every response, so a gone model fails fast with a readable ModelError
+// instead of a console full of blocked-request errors. Browser-only (Node
+// loads from the local cache); results are memoized for the session.
+const _hubCheck = new Map();
+async function ensureModelReachable(stageKey, modelId) {
+  if (!isBrowser) return;
+  if (!/^[A-Za-z0-9._/-]+$/.test(String(modelId))) return;
+  const key = stageKey + ':' + modelId;
+  if (_hubCheck.has(key)) return _hubCheck.get(key);
+  const probe = (async () => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const res = await fetch('https://huggingface.co/api/models/' + modelId + '?expand[]=siblings', {
+        headers: { accept: 'application/json' },
+        signal: ctrl.signal
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok || !body || typeof body !== 'object') {
+        const detail = (body && typeof body.error === 'string') ? ` ${body.error}` : ` (HTTP ${res.status})`;
+        throw new ModelError(
+          'E_LOAD_MODEL',
+          stageKey,
+          `Model "${modelId}" is not reachable on Hugging Face.${detail}`,
+          'Choose a different model from the Models tab, or check your connection to huggingface.co.',
+          modelId
+        );
+      }
+      const files = Array.isArray(body.siblings) ? body.siblings.map((s) => String(s.rfilename || '')) : [];
+      if (!files.some((f) => /\.onnx$/i.test(f))) {
+        throw new ModelError(
+          'E_LOAD_MODEL',
+          stageKey,
+          `Model "${modelId}" does not ship ONNX weights, so it cannot run in the browser.`,
+          'Choose a model that publishes a transformers.js (ONNX) build.',
+          modelId
+        );
+      }
+    } catch (err) {
+      if (err instanceof ModelError) throw err;
+      throw toModelError(err, { key: stageKey }, modelId);
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
+  _hubCheck.set(key, probe);
+  return probe;
+}
+
 async function buildPipeline(stageDef, modelId) {
   const status = pipelineStatus();
   status.status = 'loading';
@@ -258,6 +311,7 @@ async function buildPipeline(stageDef, modelId) {
   modelStatus.stage = stageDef.key;
   modelStatus.loaded = modelId;
   await updateModelStatus('Model Status: Loading...');
+  await ensureModelReachable(stageDef.key, modelId);
 
   let transformers;
   try {
