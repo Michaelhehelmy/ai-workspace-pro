@@ -308,25 +308,11 @@
         "sizeMb": 392
       },
       {
-        "id": "Xenova/deberta-v3-large-mnli",
-        "name": "DeBERTa-v3-Large MNLI",
-        "type": "classifier",
-        "description": "Modern zero-shot classifier, strong accuracy (large)",
-        "sizeMb": 528
-      },
-      {
         "id": "Xenova/bert-base-NER",
         "name": "BERT Base NER",
         "type": "ner",
         "description": "Named entity recognition for entity/parameter extraction",
         "sizeMb": 104
-      },
-      {
-        "id": "Xenova/bert-large-NER",
-        "name": "BERT Large NER",
-        "type": "ner",
-        "description": "Large named-entity recognition, better on rare entities",
-        "sizeMb": 417
       },
       {
         "id": "Xenova/LaMini-Flan-T5-77M",
@@ -364,13 +350,6 @@
         "sizeMb": 262
       },
       {
-        "id": "Xenova/flan-t5-large",
-        "name": "Flan-T5-Large",
-        "type": "generator",
-        "description": "Google's instruction-tuned model (780M params)",
-        "sizeMb": 410
-      },
-      {
         "id": "Xenova/TinyLlama-1.1B-Chat-v1.0",
         "name": "TinyLlama 1.1B Chat",
         "type": "generator",
@@ -392,11 +371,11 @@
             "sizeMb": 3200
           },
           {
-            "id": "Xenova/SmolLM-1.7B-Instruct",
-            "name": "SmolLM-1.7B Instruct",
+            "id": "onnx-community/Qwen2.5-1.5B-Instruct",
+            "name": "Qwen2.5 1.5B Instruct",
             "type": "generator",
-            "description": "1.7B small-but-capable chat model by Hugging Face",
-            "sizeMb": 1700
+            "description": "Alibaba's 1.5B chat model, strong quality for the size",
+            "sizeMb": 1600
           },
           {
             "id": "Xenova/Qwen1.5-1.8B-Chat",
@@ -406,18 +385,11 @@
             "sizeMb": 1800
           },
           {
-            "id": "Xenova/gemma-2b-it",
-            "name": "Gemma 2B IT",
+            "id": "onnx-community/EXAONE-3.5-2.4B-Instruct",
+            "name": "EXAONE 3.5 2.4B Instruct",
             "type": "generator",
-            "description": "Google's 2B instruct chat model (2.6B params) — premium quality",
-            "sizeMb": 2600
-          },
-          {
-            "id": "Xenova/flan-t5-xl",
-            "name": "Flan-T5-XL",
-            "type": "generator",
-            "description": "Google's instruction-tuned model (3B params)",
-            "sizeMb": 2600
+            "description": "LG's 2.4B instruct chat model — premium compact quality",
+            "sizeMb": 2500
           },
           {
             "id": "Xenova/Phi-3-mini-4k-instruct",
@@ -427,18 +399,67 @@
             "sizeMb": 3800
           },
           {
-            "id": "Xenova/OpenHermes-2.5-Mistral-7B",
-            "name": "OpenHermes 2.5 Mistral 7B",
+            "id": "Xenova/Qwen1.5-0.5B-Chat",
+            "name": "Qwen1.5 0.5B Chat",
             "type": "generator",
-            "description": "Instruction-tuned 7B chat model, high quality (slow on CPU)",
-            "sizeMb": 7000
+            "description": "Fast 0.5B Alibaba chat model for low-memory devices",
+            "sizeMb": 540
           },
           {
-            "id": "Xenova/mistral-7b-instruct-v0.2",
-            "name": "Mistral 7B Instruct v0.2",
+            "id": "onnx-community/Llama-3.2-1B-Instruct-ONNX",
+            "name": "Llama 3.2 1B Instruct (ONNX)",
             "type": "generator",
-            "description": "Mistral 7B instruct chat model, strong reasoning (slow on CPU)",
-            "sizeMb": 7000
+            "description": "ONNX build of Meta's 1B instruct chat model",
+            "sizeMb": 1300
+          },
+          {
+            "id": "onnx-community/SmolLM2-360M-Instruct-ONNX",
+            "name": "SmolLM2 360M Instruct",
+            "type": "generator",
+            "description": "Hugging Face's 360M instruct chat model, very light",
+            "sizeMb": 390
+          },
+          {
+            "id": "onnx-community/SmolLM2-135M-Instruct-ONNX",
+            "name": "SmolLM2 135M Instruct",
+            "type": "generator",
+            "description": "Tiny 135M instruct chat model for minimal-memory devices",
+            "sizeMb": 145
+          },
+          {
+            "id": "Xenova/llama-160m",
+            "name": "Llama 160M",
+            "type": "generator",
+            "description": "Minimal 160M Llama-fanily checkpoint for constrained devices",
+            "sizeMb": 170
+          },
+          {
+            "id": "Xenova/llama2.c-stories110M",
+            "name": "Llama2.c Stories 110M",
+            "type": "generator",
+            "description": "110M story-telling Llama2.c checkpoint for constrained devices",
+            "sizeMb": 120
+          },
+          {
+            "id": "onnx-community/Qwen2.5-Coder-1.5B-Instruct",
+            "name": "Qwen2.5 Coder 1.5B Instruct",
+            "type": "generator",
+            "description": "Qwen2.5 Coder 1.5B instruct, strong for code tasks",
+            "sizeMb": 1600
+          },
+          {
+            "id": "onnx-community/Falcon3-1B-Instruct",
+            "name": "Falcon3 1B Instruct",
+            "type": "generator",
+            "description": "TII Falcon3 1B instruct chat model",
+            "sizeMb": 1070
+          },
+          {
+            "id": "onnx-community/gemma-3-1b-it-ONNX",
+            "name": "Gemma 3 1B IT (ONNX)",
+            "type": "generator",
+            "description": "Google's Gemma 3 1B instruct chat model (ONNX build)",
+            "sizeMb": 1070
           }
     ]
   }

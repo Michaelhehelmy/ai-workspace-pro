@@ -44,8 +44,8 @@ const RECOMMENDATION_TABLE = Object.freeze({
   },
   ultra: {
     encoder: 'Xenova/bge-large-en-v1.5',
-    intent:  'Xenova/deberta-v3-large-mnli',
-    tagger:  'Xenova/bert-large-NER',
+    intent:  'Xenova/bart-large-mnli',
+    tagger:  'Xenova/bert-base-NER',
     dialog:  'Xenova/llama-3.2-3B-Instruct',
     dtype:   'q8',
   },
@@ -106,6 +106,18 @@ export function classifyFormFactor({ mobile, touchPoints, width, ua } = {}) {
   return null;
 }
 
+/** Unmasked GPU string for parseGpuKind (browser only, never throws). */
+function unmaskedRenderer(gl) {
+  if (typeof navigator !== 'undefined' && typeof navigator.userAgent === 'string' && /Firefox\//.test(navigator.userAgent)) {
+    // WEBGL_debug_renderer_info is deprecated in Firefox: querying it logs
+    // "WEBGL_debug_renderer_info is deprecated ... Please use RENDERER." and there is
+    // no page-visible replacement, so skip it there and report the masked context.
+    return null;
+  }
+  const info = gl.getExtension('WEBGL_debug_renderer_info');
+  return info ? String(gl.getParameter(info.UNMASKED_RENDERER_WEBGL) || '') : '';
+}
+
 /** Best-effort GPU string for parseGpuKind (browser only, never throws). */
 export function defaultGpuLabel() {
   if (typeof document === 'undefined') return null;
@@ -114,12 +126,11 @@ export function defaultGpuLabel() {
     if (!canvas || typeof canvas.getContext !== 'function') return null;
     const gl2 = canvas.getContext('webgl2');
     if (gl2) {
-      const info = gl2.getExtension('WEBGL_debug_renderer_info');
-      const renderer = info ? String(gl2.getParameter(info.UNMASKED_RENDERER_WEBGL) || '') : '';
+      const renderer = unmaskedRenderer(gl2);
       return renderer ? `WebGL 2.0 (${renderer})` : 'WebGL 2.0';
     }
-    if (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) return 'WebGL 1.0';
-    return null;
+    const gl1 = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    return gl1 ? 'WebGL 1.0' : null;
   } catch { return null; }
 }
 
