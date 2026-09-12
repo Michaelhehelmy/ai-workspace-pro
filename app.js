@@ -13,19 +13,19 @@ import { filterRecords, escapeHtml } from './core/utils.js';
 import { AgentCommunication } from './app/agents.js';
 import { GoogleAPI } from './app/google.js';
 import { getModel, computeEmbedding, embedText, unloadAll, isStageLoaded, getPipelineStatus, PIPELINE_STAGES, ModelError, formatModelError, preloadModels, forcePreload, getTransformers, resolveStage, getModelCatalog, getModelsForStage, getModelMeta, getStageOptions, applyStageModel, defaultModelSettings, getDeviceRecommendations, buildRecommendedModelSettings } from './app/models.js';
-import { createBackend, registerBackend, getBackend, listBackends } from './app/ai/backend.js';
+import { createBackend, registerBackend, getBackend, listBackends, ROLE_TO_STAGE, TASK_TO_STAGE } from './app/ai/backend.js';
 import { resolveBackendForStage, setStageBackend, probeAllBackends, resetHealthCache } from './app/ai/routing.js';
 import { agentLoop } from './app/ai/agent-loop.js';
 import './app/ai/llamacpp-backend.js';
 import './app/ai/ollama-backend.js';
 import { detectIntent, parseToolCall } from './app/intent.js';
 import { executeTool, registerAllCoreTools } from './app/execute.js';
-import { runPipeline, classifyIntent, extractEntities, generateResponse, composeToolText, rankTools, routeToAgent, INTENT_LABELS } from './app/pipeline.js';
+import { runPipeline, classifyIntent, extractEntities, generateResponse, generateChatResponse, composeToolText, rankTools, routeToAgent, INTENT_LABELS } from './app/pipeline.js';
 import { loadConfiguration, init, agentComm, googleAPI } from './app/init.js';
-import { Skill, SkillLibrary, skillLibrary, BUILTIN_SKILLS } from './core/skills.js';
+import { Skill, SkillLibrary, skillLibrary, BUILTIN_SKILLS, buildSystemPrompt } from './core/skills.js';
 import { compactChat, buildDigestSummary } from './core/compaction.js';
 import { detectDevice, defaultProbes, getModelFit, recommendModelSet, describeDevice, DEVICE_TIERS } from './core/device.js';
-import { startPiRpc, createPiClient, createPiServer, PiRpcError } from './app/pi/pi-rpc.js';
+import { startPiRpc, createPiClient, createPiServer, PiRpcError, PI_NODE, buildRequest, defaultMethods } from './app/pi/pi-rpc.js';
 
 export {
   state,
@@ -47,6 +47,8 @@ export {
   createSandboxedTool,
   Extension,
   ExtensionRegistry,
+  ROLE_TO_STAGE,
+  TASK_TO_STAGE,
   extensionRegistry,
   BUILTIN_EXTENSIONS,
   applyBuiltinExtensions,
@@ -93,6 +95,7 @@ export {
   classifyIntent,
   extractEntities,
   generateResponse,
+  generateChatResponse,
   composeToolText,
   rankTools,
   routeToAgent,
@@ -105,12 +108,16 @@ export {
   SkillLibrary,
   skillLibrary,
   BUILTIN_SKILLS,
+  buildSystemPrompt,
   compactChat,
   buildDigestSummary,
   startPiRpc,
   createPiClient,
   createPiServer,
   PiRpcError,
+  PI_NODE,
+  buildRequest,
+  defaultMethods,
   detectDevice,
   defaultProbes,
   getModelFit,

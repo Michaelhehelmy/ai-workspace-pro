@@ -19,6 +19,7 @@
     "@huggingface/transformers": "3.3.3",
     "c8": "^12.0.0",
     "onnxruntime-node": "1.20.1",
+    "puppeteer-core": "^24.43.1",
     "wrangler": "^4.20.0"
   }
 }
