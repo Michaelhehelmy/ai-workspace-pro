@@ -145,6 +145,10 @@ export async function init() {
     extensionRegistry.restoreState(extState.disabled);
   }
 
+  // Rehydrate the "assistant's folder" handle (Word/Excel output target).
+  const { restoreFolder } = await import('../core/files.js');
+  restoreFolder().catch(() => {});
+
   state.configIssues = state.config ? collectConfigIssues(state.config) : [];
 
   if (isBrowser) {

@@ -17,6 +17,7 @@ import { detectIntent } from './intent.js';
 import { composeToolText, generateChatResponse, routeToAgent } from './pipeline.js';
 import { setCharacterEmotion } from './ui.js';
 import { extensionRegistry, applyBuiltinExtensions } from '../core/extensions.js';
+import { buildDocx, buildXlsx, saveFile, defaultDocxFilename } from '../core/files.js';
 
 let workerAPIProbe = null;
 function hasWorkerAPI() {
@@ -162,6 +163,22 @@ export async function executeTool(toolIdentifier, rawInput, stateInstance = stat
   } else if (actualToolName === 'delegate_to_agent' || actualToolName === 'ask_agent') {
     if (!params.message && params.query) {
       params.message = params.query;
+    }
+  } else if (actualToolName === 'create_document') {
+    if (!params.title && !params.filename && !params.content) {
+      const titled = inputText.match(/(?:titled|named|called)\s+["']?([a-zA-Z0-9 _-]+?)["']?(?:\s|$)/i);
+      if (titled) params.title = titled[1].trim();
+      const fileRef = inputText.match(/([a-zA-Z0-9 _-]+\.docx)\b/i);
+      if (fileRef) params.filename = fileRef[1].trim();
+    }
+  } else if (actualToolName === 'create_spreadsheet') {
+    if (!params.sheets && !params.filename) {
+      const sheetName = inputText.match(/(?:spreadsheet|excel(?: file)?|sheet)\s*(?:named|called|titled)?\s+["']?([a-zA-Z0-9 _-]+?)["']?(?:\s|$)/i);
+      if (sheetName && !/^capturing|^with/i.test(sheetName[1])) {
+        params.sheets = [{ name: sheetName[1].trim().replace(/\.xlsx$/i, ''), rows: [] }];
+      }
+      const fileRef = inputText.match(/([a-zA-Z0-9 _-]+\.xlsx)\b/i);
+      if (fileRef) params.filename = fileRef[1].trim();
     }
   }
 
@@ -991,9 +1008,82 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
     }
   });
 
+  registry.register({
+    name: 'create_document',
+    description: 'Create a Word (.docx) file — saved into the user\'s chosen folder, or downloaded',
+    schema: {
+      parameters: {
+        title: { type: 'string', required: false },
+        content: { type: 'array', required: false },
+        filename: { type: 'string', required: false }
+      }
+    },
+    permissionLevel: registry.permissionLevels.USER_DATA,
+    icon: 'bi-file-earmark-word',
+    execute: async (params) => {
+      let content = params.content;
+      if (typeof content === 'string') {
+        content = content.split('\n').map(l => l.trim()).filter(Boolean);
+      }
+      const title = params.title || 'Untitled Document';
+      const filename = params.filename && /\.docx$/i.test(params.filename)
+        ? params.filename
+        : defaultDocxFilename(title);
+      const paragraphs = Array.isArray(content) && content.length
+        ? content
+        : [{ text: title, heading: true }];
+      const bytes = await buildDocx({ title, paragraphs });
+      const where = await saveFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      return { text: whereText(where, 'document') };
+    }
+  });
+
+  registry.register({
+    name: 'create_spreadsheet',
+    description: 'Create an Excel (.xlsx) file with rows of data — saved into the chosen folder, or downloaded',
+    schema: {
+      parameters: {
+        sheets: { type: 'array', required: false },
+        headers: { type: 'array', required: false },
+        rows: { type: 'array', required: false },
+        filename: { type: 'string', required: false }
+      }
+    },
+    permissionLevel: registry.permissionLevels.USER_DATA,
+    icon: 'bi-file-earmark-excel',
+    execute: async (params) => {
+      let sheets = params.sheets;
+      if (!Array.isArray(sheets) || !sheets.length) {
+        const dataRows = Array.isArray(params.rows) ? params.rows : [];
+        const all = Array.isArray(params.headers) && params.headers.length
+          ? [params.headers, ...dataRows]
+          : dataRows;
+        sheets = [{ name: 'Sheet1', rows: all }];
+      }
+      const filename = params.filename && /\.xlsx$/i.test(params.filename)
+        ? params.filename
+        : 'worksheet.xlsx';
+      const bytes = await buildXlsx({ sheets });
+      const where = await saveFile(filename, bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      return { text: whereText(where, 'spreadsheet') };
+    }
+  });
+
   // Group the freshly-registered tools into named extensions (Pi-style bundles)
   // and attach the extension registry to this registry instance.
   applyBuiltinExtensions(extensionRegistry, registry);
+}
+
+// Compose a friendly save-confirmation for files.js saveFile() results.
+function whereText(where, kind) {
+  if (!where) return `The ${kind} was generated.`;
+  if (where.folder) {
+    return `The ${kind} was saved to the folder **${where.folder}/${where.filename}**.`;
+  }
+  if (where.download) {
+    return `The ${kind} **${where.download}** was downloaded to your device. To save it straight into a folder next time, pick one in **Tools → Documents**.`;
+  }
+  return `The ${kind} **${where.filename}** was written.`;
 }
 
 // Small helper: reconstruct a plausible "message" for response composition.

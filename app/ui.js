@@ -11,6 +11,7 @@ import { escapeHtml } from '../core/utils.js';
 import { configAPI } from '../core/config.js';
 import { workspaceDB as db } from '../core/db.js';
 import { detectDevice, describeDevice, getModelFit, DEVICE_TIERS } from '../core/device.js';
+import { hasFolderHandle, getFolderName, requestFolder } from '../core/files.js';
 
 // ── Toasts ──────────────────────────────────────────────────────────────────
 export function showToast(message, type = 'info') {
@@ -309,7 +310,8 @@ const EMOJI = {
   add_character: '🧑‍🚀', add_business: '🏢', create_tool: '🧰', update_config: '⚙️', get_config: '⚙️',
   rollback_config: '🔄', list_tools: '🧰', execute_chain: '🔗', delegate_to_agent: '🤖', ask_agent: '🤖',
   list_agents: '🤖', route_to_specialist: '🧭', character_switch: '🔄', change_character_name: '✏️',
-  google_calendar_list: '📅', google_drive_list: '🗂️', google_sheets_read: '📊'
+  google_calendar_list: '📅', google_drive_list: '🗂️', google_sheets_read: '📊',
+  create_document: '📄', create_spreadsheet: '📊'
 };
 
 export function emotionFor(res) {
@@ -1045,7 +1047,35 @@ export function renderTools() {
       <span><i class="bi bi-shield-check me-1"></i><strong>${enabledIds.size}</strong> enabled</span>
     </div>`;
 
-  list.innerHTML = stats + (cards || '<div class="alert alert-info">No tools registered.</div>') + orphanCard;
+  list.innerHTML = docsCard() + stats + (cards || '<div class="alert alert-info">No tools registered.</div>') + orphanCard;
+}
+
+// Status card for the "assistant's folder" — where Word/Excel files are saved.
+function docsCard() {
+  const folderName = getFolderName();
+  const supported = typeof window.showDirectoryPicker === 'function';
+  const status = folderName
+    ? `<strong class="text-success"><i class="bi bi-check-circle me-1"></i>${escapeHtml(folderName)}</strong>
+       <small class="text-body-secondary d-block">Word &amp; Excel files will be saved here.</small>`
+    : supported
+      ? `<span class="text-body-secondary">No folder chosen yet — files are downloaded instead.</span>
+         <small class="text-body-secondary d-block">Pick a folder and the assistant can save Word/Excel files straight into it.</small>`
+      : `<span class="text-body-secondary">Download mode — this browser can't pick a folder.</span>
+         <small class="text-body-secondary d-block">Generated Word and Excel files are downloaded to your device.</small>`;
+  const button = supported
+    ? `<button type="button" class="btn btn-sm ${folderName ? 'btn-outline-secondary' : 'btn-outline-primary'} d-flex align-items-center gap-1" id="chooseFolderBtn">
+         <i class="bi ${folderName ? 'bi-folder2-x' : 'bi-folder2-open'}"></i> ${folderName ? 'Change folder' : 'Choose folder'}
+       </button>`
+    : '';
+  return `<div class="border rounded mb-3 overflow-hidden shadow-sm documents-card">
+    <div class="d-flex flex-wrap align-items-center gap-2 px-3 py-2 bg-body-tertiary">
+      <i class="bi bi-folder2-open fs-5 text-primary"></i>
+      <strong>Assistant's Folder</strong>
+      <span class="badge text-bg-secondary">Documents</span>
+      <span class="ms-auto">${button}</span>
+    </div>
+    <div class="px-3 py-2 small">${status}</div>
+  </div>`;
 }
 
 function renderExtensionCard(ext, enabled) {
@@ -2130,6 +2160,18 @@ export function initControls() {
       }
       const toolBtn = e.target.closest('[data-tool-detail]');
       if (toolBtn) openToolDetail(toolBtn.dataset.toolDetail);
+    });
+  }
+
+  // Documents: choose the "assistant's folder" for Word/Excel output
+  const chooseFolderBtn = document.getElementById('chooseFolderBtn');
+  if (chooseFolderBtn) {
+    chooseFolderBtn.addEventListener('click', async () => {
+      const name = await requestFolder();
+      if (name) {
+        showToast(`Assistant's folder set to "${name}".`, 'success');
+        renderTools();
+      }
     });
   }
 

@@ -171,6 +171,8 @@ export function detectIntentRules(message, stateInstance = state) {
     { tool: 'add_event', keys: ['add event', 'new event', 'create event', 'schedule ', 'remind me', 'set a reminder', 'set reminder', 'book a meeting', 'book meeting'] },
     { tool: 'add_todo', keys: ['add todo', 'new todo', 'create todo', 'add task', 'new task', 'create task', 'todo:'] },
     { tool: 'add_transaction', keys: ['add transaction', 'record transaction', 'log expense', 'record expense', 'log a transaction'] },
+    { tool: 'create_document', keys: ['create document', 'make a document', 'write a document', 'create a word file', 'make a word file', 'write a word file', 'create a word document', 'make a word document', 'docx'] },
+    { tool: 'create_spreadsheet', keys: ['create spreadsheet', 'make a spreadsheet', 'create excel file', 'create an excel', 'make an excel', 'make a excel', 'spreadsheet file', 'xlsx'] },
     { tool: 'search', keys: ['search for ', 'search ', 'find ', 'look up ', 'query ', 'retrieve ', 'fetch '] }
   ];
 

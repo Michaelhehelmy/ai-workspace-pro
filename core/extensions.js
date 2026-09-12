@@ -279,6 +279,14 @@ export const BUILTIN_EXTENSIONS = [
     tools: ['google_calendar_list', 'google_drive_list', 'google_sheets_read']
   },
   {
+    id: 'documents',
+    name: 'Documents',
+    version: '1.0.0',
+    description: 'Create Word and Excel files in a folder you choose (or as downloads).',
+    icon: 'bi-folder2-open',
+    tools: ['create_document', 'create_spreadsheet']
+  },
+  {
     id: 'custom',
     name: 'Dynamic Tools',
     version: '1.0.0',

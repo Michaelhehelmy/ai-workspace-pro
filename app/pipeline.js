@@ -34,7 +34,8 @@ export const INTENT_LABELS = [
   'add_character', 'add_business', 'create_tool', 'rollback_config', 'list_tools',
   'execute_chain', 'delegate_to_agent', 'ask_agent', 'list_agents',
   'route_to_specialist', 'web_search', 'google_calendar_list', 'google_drive_list',
-  'google_sheets_read', 'change_character_name', 'small_talk'
+  'google_sheets_read', 'change_character_name', 'create_document', 'create_spreadsheet',
+  'small_talk'
 ];
 
 function pipelineConf() {

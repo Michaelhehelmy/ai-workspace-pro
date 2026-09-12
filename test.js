@@ -72,6 +72,9 @@ import {
   PiRpcError,
   detectDevice,
   defaultProbes,
+  deviceMemoryToMb,
+  estimateMemoryMb,
+  classifyFormFactor,
   getModelFit,
   recommendModelSet,
   describeDevice,
@@ -102,7 +105,17 @@ import {
   buildSystemPrompt,
   PI_NODE,
   buildRequest,
-  defaultMethods
+  defaultMethods,
+  crc32,
+  zipBytes,
+  inspectZip,
+  buildDocx,
+  buildXlsx,
+  saveFile,
+  setFolderHandle,
+  clearFolderHandle,
+  hasFolderHandle,
+  getFolderName
 } from './app.js';
 import worker from './worker/index.js';
 
@@ -205,6 +218,11 @@ async function runAllTests() {
   state.activeBusinessId = 'personal';
 
   const testDb = await freshDb('test-ai-workspace');
+
+  // Shared-state safety: the browser suite runs against the same persisted
+  // config/IndexedDB as the app, so entity IDs added here must be unique per
+  // run or re-runs collide with leftovers ("... already exists").
+  const runStamp = Date.now().toString(36);
 
   const agentComm = new AgentCommunication(state, testDb);
   const googleAPI = new GoogleAPI(state, testDb);
@@ -358,7 +376,7 @@ async function runAllTests() {
   await runTest('ConfigAPI', 'addCharacter adds and updates config', async () => {
     const api = new ConfigAPI(testDb, state);
     const newChar = {
-      id: 'tester_bot',
+      id: `tester_bot_${runStamp}`,
       name: 'Tester Bot',
       persona: 'Automated QA',
       systemPrompt: 'You test things.',
@@ -368,37 +386,37 @@ async function runAllTests() {
     };
     await api.addCharacter(newChar);
     const chars = api.getCharacters();
-    const found = chars.find(c => c.id === 'tester_bot');
+    const found = chars.find(c => c.id === `tester_bot_${runStamp}`);
     assert(found !== undefined, 'New character should exist in config');
     assertEquals(found.name, 'Tester Bot');
   });
 
   await runTest('ConfigAPI', 'addBusiness adds workspace', async () => {
     const api = new ConfigAPI(testDb, state);
-    await api.addBusiness({ id: 'test_corp', name: 'Test Corp' });
-    const biz = api.getBusinesses().find(b => b.id === 'test_corp');
+    await api.addBusiness({ id: `test_corp_${runStamp}`, name: 'Test Corp' });
+    const biz = api.getBusinesses().find(b => b.id === `test_corp_${runStamp}`);
     assert(biz !== undefined, 'Test Corp should exist');
     assertEquals(biz.name, 'Test Corp');
   });
 
   await runTest('ConfigAPI', 'addSchema registers new schema table', async () => {
     const api = new ConfigAPI(testDb, state);
-    await api.addSchema('personal', 'test_table', {
+    await api.addSchema('personal', `test_table_${runStamp}`, {
       fields: { title: 'string', rating: 'number' },
       vectorize: ['title']
     });
     const schemas = api.getSchemas('personal');
-    assert(schemas.test_table !== undefined, 'test_table should be registered');
+    assert(schemas[`test_table_${runStamp}`] !== undefined, 'test_table should be registered');
   });
 
   await runTest('ConfigAPI', 'updateSchema patches existing schema', async () => {
     const api = new ConfigAPI(testDb, state);
-    await api.addSchema('personal', 'test_table_upd', {
+    await api.addSchema('personal', `test_table_upd_${runStamp}`, {
       fields: { title: 'string', rating: 'number' },
       vectorize: ['title']
     });
-    await api.updateSchema('personal', 'test_table_upd', { vectorize: ['title', 'rating'] });
-    const updated = api.getSchemas('personal').test_table_upd;
+    await api.updateSchema('personal', `test_table_upd_${runStamp}`, { vectorize: ['title', 'rating'] });
+    const updated = api.getSchemas('personal')[`test_table_upd_${runStamp}`];
     assert(updated && updated.vectorize.includes('rating'), 'vectorize should be patched');
   });
 
@@ -418,12 +436,13 @@ async function runAllTests() {
 
   await runTest('ConfigAPI', 'editBusiness renames workspace', async () => {
     const api = new ConfigAPI(testDb, state);
-    await api.addBusiness({ id: 'renamable_corp', name: 'Old Name' });
-    await api.editBusiness('renamable_corp', { name: 'New Name' });
-    const biz = api.getBusinesses().find(b => b.id === 'renamable_corp');
+    const bizId = `renamable_corp_${runStamp}`;
+    await api.addBusiness({ id: bizId, name: 'Old Name' });
+    await api.editBusiness(bizId, { name: 'New Name' });
+    const biz = api.getBusinesses().find(b => b.id === bizId);
     assertEquals(biz.name, 'New Name');
     let threw = false;
-    try { await api.editBusiness('renamable_corp', { id: 'different_id' }); } catch (e) { threw = true; }
+    try { await api.editBusiness(bizId, { id: 'different_id' }); } catch (e) { threw = true; }
     assert(threw, 'changing business id should throw');
   });
 
@@ -1093,6 +1112,46 @@ async function runAllTests() {
     assert(probes.wasmSimd() === true || probes.wasmSimd() === false, 'wasmSimd probe should be boolean');
   });
 
+  await runTest('Device', 'deviceMemoryToMb converts GB to MB (the low-tier bug regression)', () => {
+    assertEquals(deviceMemoryToMb(8), 8192, '8GB deviceMemory must be 8192 MB, not 8 MB');
+    assertEquals(deviceMemoryToMb('16'), 16384, 'string GB should parse');
+    assertEquals(deviceMemoryToMb(0), null, '0/absent RAM is unknown');
+    assertEquals(deviceMemoryToMb(null), null, 'null RAM is unknown');
+  });
+
+  await runTest('Device', 'estimateMemoryMb uses disclosed GB and falls back to core-based guesses', () => {
+    assertEquals(estimateMemoryMb({ deviceMemory: 8, hardwareConcurrency: 16, formFactor: 'desktop' }), 8192, '8GB disclosure wins');
+    assertEquals(estimateMemoryMb({ deviceMemory: null, hardwareConcurrency: 16, formFactor: 'desktop' }), 16384, '16-core desktop with no disclosure ~ 16GB');
+    assertEquals(estimateMemoryMb({ deviceMemory: null, hardwareConcurrency: 8, formFactor: 'tablet' }), 8192, '8-core tablet ~ 8GB');
+    assertEquals(estimateMemoryMb({ deviceMemory: null, hardwareConcurrency: 6, formFactor: 'laptop' }), 4096, '6-core laptop ~ 4GB');
+    assertEquals(estimateMemoryMb({ deviceMemory: null, hardwareConcurrency: 1, formFactor: 'laptop' }), null, 'single-core stays unknown');
+  });
+
+  await runTest('Device', 'classifyFormFactor maps browser signals to device classes', () => {
+    assertEquals(classifyFormFactor({ mobile: true, width: 390, ua: 'Mozilla/5.0 (iPhone)' }), 'phone');
+    assertEquals(classifyFormFactor({ mobile: true, width: 1024, ua: 'Mozilla/5.0' }), 'tablet');
+    assertEquals(classifyFormFactor({ mobile: false, touchPoints: 0, width: 1920, ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0' }), 'desktop');
+    assertEquals(classifyFormFactor({ mobile: false, touchPoints: 0, width: 1280, ua: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/120.0' }), 'laptop');
+    assertEquals(classifyFormFactor({ mobile: false, touchPoints: 5, width: 1280, ua: 'Mozilla/5.0 (Linux; Android 13)' }), 'tablet', 'touch + wide screen is a tablet');
+    assertEquals(classifyFormFactor({ ua: 'Node.js/22.0.0' }), null, 'Node never reports a form factor');
+  });
+
+  await runTest('Device', 'detectDevice scores a 32GB desktop (8GB disclosure + webgl2) ultra', () => {
+    const profile = detectDevice({
+      formFactor: () => 'desktop',
+      gpu: () => 'ANGLE (NVIDIA GeForce RTX 4070 Direct3D11) WebGL 2.0',
+      cores: () => 16,
+      memoryMb: () => deviceMemoryToMb(8),
+      wasmSimd: () => true,
+      wasm: () => true,
+      network: () => null,
+      battery: () => null
+    });
+    assert(profile.tier === DEVICE_TIERS.ULTRA, `16-core desktop with real GPU should be ultra, got ${profile.tier} (${profile.score})`);
+    assert(profile.score >= 90, `expected score >= 90, got ${profile.score}`);
+    assert(profile.summary.includes('≥8 GB'), `summary should show the disclosure floor, got "${profile.summary}"`);
+  });
+
   await runTest('Device', 'getDeviceRecommendations maps stages to catalog ids', async () => {
     const rec = getDeviceRecommendations({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
     assert(rec.profile && rec.profile.tier, 'profile attached');
@@ -1167,28 +1226,31 @@ async function runAllTests() {
   });
 
   // 5. Tool Registry & Sandboxing
-  await runTest('ToolRegistry', 'registers all 25 tools from config', () => {
+  await runTest('ToolRegistry', 'registers all 27 tools from config', () => {
     const registry = new ToolRegistry();
     registerAllCoreTools(registry, testDb, state, agentComm, googleAPI);
     const tools = registry.getAllTools();
-    assertEquals(tools.length, 25, `Expected exactly 25 registered tools, got ${tools.length}`);
+    assertEquals(tools.length, 27, `Expected exactly 27 registered tools, got ${tools.length}`);
     assert(registry.hasTool('add_transaction'), 'add_transaction tool should exist');
     assert(registry.hasTool('web_search'), 'web_search tool should exist');
     assert(registry.hasTool('delegate_to_agent'), 'delegate_to_agent tool should exist');
+    assert(registry.hasTool('create_document'), 'create_document tool should exist');
+    assert(registry.hasTool('create_spreadsheet'), 'create_spreadsheet tool should exist');
   });
 
   // 5b. Extensions (Pi-style modular bundles)
-  await runTest('Extensions', 'built-in manifest groups all 25 tools into named extensions', () => {
+  await runTest('Extensions', 'built-in manifest groups all 27 tools into named extensions', () => {
     const reg = new ExtensionRegistry();
     applyBuiltinExtensions(reg);
     const exts = reg.listExtensions();
     assertEquals(exts.length, BUILTIN_EXTENSIONS.length);
     const all = exts.flatMap(e => e.tools);
-    assertEquals(all.length, 25, `Expected 25 tools grouped, got ${all.length}`);
+    assertEquals(all.length, 27, `Expected 27 tools grouped, got ${all.length}`);
     assertEquals(reg.getExtensionFor('add_transaction').id, 'finance');
     assertEquals(reg.getExtensionFor('web_search').id, 'web');
     assertEquals(reg.getExtensionFor('execute_chain').id, 'system');
     assertEquals(reg.getExtensionFor('google_drive_list').id, 'google');
+    assertEquals(reg.getExtensionFor('create_document').id, 'documents');
     assertEquals(reg.isEnabled('system'), true);
   });
 
@@ -1201,6 +1263,111 @@ async function runAllTests() {
       'add_transaction should carry its extension metadata');
     const sys = tools.find(t => t.name === 'execute_chain');
     assert(sys && sys.extensionId === 'system', 'execute_chain should belong to the system extension');
+  });
+
+  // 5c. Files: folder access + Word/Excel document generation (core/zip, core/files)
+  await runTest('Files', 'crc32 matches the standard IEEE check value', () => {
+    const tv = new TextEncoder();
+    assertEquals(crc32(tv.encode('123456789')).toString(16), 'cbf43926');
+  });
+
+  await runTest('Files', 'zipBytes round-trips through inspectZip', async () => {
+    const archive = await zipBytes([
+      { name: 'hello.txt', data: 'Hello, world!' },
+      { name: 'dir/raw.bin', data: new Uint8Array([0, 1, 2, 3, 255, 254]) }
+    ]);
+    assert(archive instanceof Uint8Array && archive.length > 0, 'zipBytes should produce bytes');
+    const members = await inspectZip(archive);
+    assertEquals(members.length, 2);
+    const hello = members.find(m => m.name === 'hello.txt');
+    assert(hello, 'hello.txt member missing');
+    const text = new TextDecoder().decode(hello.data);
+    assertEquals(text, 'Hello, world!');
+    const bin = members.find(m => m.name === 'dir/raw.bin');
+    assert(bin && bin.data[0] === 0 && bin.data[5] === 254, 'raw bytes should survive round-trip');
+  });
+
+  await runTest('Files', 'buildDocx produces a valid Word document with the requested content', async () => {
+    const bytes = await buildDocx({
+      title: 'Quarterly Report',
+      paragraphs: [
+        { text: 'Quarterly Report', heading: true },
+        'Revenue was strong this quarter.',
+        { text: 'Conclusion', bold: true }
+      ]
+    });
+    const members = await inspectZip(bytes);
+    const names = members.map(m => m.name);
+    assert(names.includes('word/document.xml'), 'docx should contain word/document.xml');
+    assert(names.includes('[Content_Types].xml'), 'docx should declare content types');
+    const docXml = new TextDecoder().decode(members.find(m => m.name === 'word/document.xml').data);
+    assert(docXml.includes('Quarterly Report'), 'document should contain the title text');
+    assert(docXml.includes('Revenue was strong this quarter.'), 'document should contain paragraph text');
+    assert(docXml.includes('<w:b/>'), 'document should mark headings/bold');
+  });
+
+  await runTest('Files', 'buildXlsx produces a valid spreadsheet with typed cells', async () => {
+    const bytes = await buildXlsx({
+      sheets: [{
+        name: 'Budget',
+        rows: [
+          [{ value: 'Category', bold: true }, { value: 'Amount', bold: true }],
+          ['Rent', 1200],
+          ['Groceries', 180.5],
+          ['Paid', true]
+        ]
+      }]
+    });
+    const members = await inspectZip(bytes);
+    const names = members.map(m => m.name);
+    assert(names.includes('xl/workbook.xml') && names.includes('xl/worksheets/sheet1.xml'), 'xlsx should contain workbook + sheet parts');
+    const sheetXml = new TextDecoder().decode(members.find(m => m.name === 'xl/worksheets/sheet1.xml').data);
+    assert(sheetXml.includes('Category') && sheetXml.includes('Rent'), 'sheet should contain text cells');
+    assert(sheetXml.includes('<v>1200</v>') && sheetXml.includes('<v>180.5</v>'), 'sheet should contain numeric cells');
+    assert(sheetXml.includes('t="b"') && sheetXml.includes('<v>1</v>'), 'sheet should contain a boolean cell');
+    assert(sheetXml.includes('s="1"'), 'bold header cells should reference the bold style');
+    const wb = new TextDecoder().decode(members.find(m => m.name === 'xl/workbook.xml').data);
+    assert(wb.includes('Budget'), 'workbook should list the sheet name');
+  });
+
+  await runTest('Files', 'saveFile writes to a folder when a handle is set (node: metadata)', async () => {
+    // Node-only: without the File System Access API the save is just recorded.
+    if (!isNode) return;
+    clearFolderHandle();
+    const where = await saveFile('test.docx', new Uint8Array([1, 2, 3]), 'application/octet-stream');
+    assertEquals(where.filename, 'test.docx');
+    assertEquals(where.bytes, 3);
+    assert(where.folder === undefined, 'no folder should be reported when none chosen');
+  });
+
+  await runTest('Files', 'saveFile falls back to download mode when no folder is chosen', async () => {
+    // In Node there is no download API, so the metadata path is exercised; in
+    // the browser the same code path routes to a real anchor-tag download.
+    clearFolderHandle();
+    const where = await saveFile('report.xlsx', new Uint8Array([9]), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    assert(where && typeof where.bytes === 'number');
+    assert(where.folder === undefined, 'no folder claim without a folder handle');
+  });
+
+  await runTest('Files', 'saveFile writes into the assigned folder via a File System Access-style handle', async () => {
+    const written = [];
+    const fakeHandle = {
+      name: 'MyFiles',
+      getFileHandle: async (name, opts) => ({
+        createWritable: async () => ({
+          write: async (data) => { written.push({ name, data }); },
+          close: async () => {}
+        })
+      })
+    };
+    setFolderHandle(fakeHandle);
+    const where = await saveFile('memo.txt', new Uint8Array([65, 66, 67]), 'text/plain');
+    assertEquals(where.folder, 'MyFiles');
+    assertEquals(where.filename, 'memo.txt');
+    assertEquals(written.length, 1);
+    assertEquals(written[0].name, 'memo.txt');
+    assertEquals(written[0].data.length, 3);
+    clearFolderHandle();
   });
 
   await runTest('Extensions', 'disabled extension gate blocks execution and gateFor reports it', async () => {
@@ -1403,11 +1570,12 @@ async function runAllTests() {
   });
 
   await runTest('Tools', '7. create_schema adds custom schema', async () => {
+    const name = `invoices_${runStamp}`;
     const res = await mainRegistry.execute('create_schema', {
-      name: 'invoices',
+      name,
       fields: { invoiceNumber: 'string', total: 'number' }
     });
-    assert(res.text.includes('Created dynamic schema') && res.text.includes('invoices'), 'Should confirm schema creation');
+    assert(res.text.includes('Created dynamic schema') && res.text.includes(name), 'Should confirm schema creation');
   });
 
   await runTest('Tools', '8. search performs vector / keyword search', async () => {
@@ -1430,9 +1598,10 @@ async function runAllTests() {
   });
 
   await runTest('Tools', '11. add_character registers new character', async () => {
+    const charId = `sage_${runStamp}`;
     const res = await mainRegistry.execute('add_character', {
       character: {
-        id: 'sage',
+        id: charId,
         name: 'Sage',
         persona: 'Philosophy & Logic AI',
         systemPrompt: 'You are Sage.',
@@ -1441,15 +1610,15 @@ async function runAllTests() {
       }
     });
     assert(res.text.includes('Character') && res.text.includes('Sage'), 'Should confirm character added');
-    assert(state.config.characters.some(c => c.id === 'sage'), 'Character should exist in state');
+    assert(state.config.characters.some(c => c.id === charId), 'Character should exist in state');
   });
 
   await runTest('Tools', '12. add_business registers new workspace', async () => {
     const res = await mainRegistry.execute('add_business', {
-      business: { id: 'acme', name: 'Acme Enterprises' }
+      business: { id: `acme_${runStamp}`, name: 'Acme Enterprises' }
     });
     assert(res.text.includes('Workspace') && res.text.includes('Acme Enterprises'), 'Should confirm business added');
-    assert(state.config.businesses.some(b => b.id === 'acme'), 'Business should exist in state');
+    assert(state.config.businesses.some(b => b.id === `acme_${runStamp}`), 'Business should exist in state');
   });
 
   await runTest('Tools', '13. create_tool registers dynamic sandboxed tool', async () => {
@@ -1537,6 +1706,30 @@ async function runAllTests() {
     const res = await mainRegistry.execute('change_character_name', { name: 'Aria Prime' });
     assert(res.text.includes('My name has been changed to') && res.text.includes('Aria Prime'), 'Should confirm name change');
     assertEquals(state.config.characters.find(c => c.id === 'aria').name, 'Aria Prime');
+  });
+
+  await runTest('Tools', '26. create_document writes a Word file and reports its location', async () => {
+    clearFolderHandle();
+    const res = await mainRegistry.execute('create_document', {
+      title: 'Meeting Notes',
+      filename: 'Meeting Notes.docx',
+      content: ['Introduced the folder-access feature.', 'Next: ship it.']
+    });
+    assert(res.text.includes('Meeting Notes.docx'), `Should reference the generated filename, got: ${res.text}`);
+    assert(/written|downloaded/.test(res.text), `Should report where the document went, got: ${res.text}`);
+    const exec = await executeTool('create_document', 'create a document titled Board Summary and call it board-summary.docx', state, mainRegistry);
+    assert(exec.text.includes('board-summary.docx'), `NL filename + title should drive the output name, got: ${exec.text}`);
+  });
+
+  await runTest('Tools', '27. create_spreadsheet writes an Excel file and reports its location', async () => {
+    clearFolderHandle();
+    const res = await mainRegistry.execute('create_spreadsheet', {
+      sheets: [{ name: 'Sales', rows: [['Region', 'Q1'], ['North', 1200], ['South', 900]] }],
+      filename: 'sales-q1.xlsx'
+    });
+    assert(res.text.includes('sales-q1.xlsx'), 'Should reference the generated filename');
+    const exec = await executeTool('create_spreadsheet', 'create a spreadsheet named Team Budget with file team-budget.xlsx', state, mainRegistry);
+    assert(exec.text.includes('team-budget.xlsx'), 'NL spreadsheet name + filename should drive the output name');
   });
 
   // ── Regression: NL extraction / parameter fixes ────────────────────────────
@@ -2082,11 +2275,11 @@ async function runAllTests() {
 
   // ── 9h. execute.js NL extraction & fallback paths ─────────────────────────
   await runTest('Coverage/Execute', 'NL create_schema, add_character, add_business extract entity names', async () => {
-    const schema = await executeTool('create_schema', 'create schema invoices2', state, mainRegistry);
-    assert(schema.text.includes('invoices2'), 'schema created from NL');
-    const chr = await executeTool('add_character', 'create a character named Splint', state, mainRegistry);
+    const schema = await executeTool('create_schema', `create schema invoices2_${runStamp}`, state, mainRegistry);
+    assert(schema.text.includes(`invoices2_${runStamp}`), 'schema created from NL');
+    const chr = await executeTool('add_character', `create a character named Splint ${runStamp}`, state, mainRegistry);
     assert(chr.text.includes('Splint'), 'character added from NL');
-    const biz = await executeTool('add_business', 'create a workspace named Sandbox', state, mainRegistry);
+    const biz = await executeTool('add_business', `create a workspace named Sandbox ${runStamp}`, state, mainRegistry);
     assert(biz.text.includes('Sandbox'), 'workspace added from NL');
   });
 

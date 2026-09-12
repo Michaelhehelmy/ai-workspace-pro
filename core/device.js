@@ -52,16 +52,109 @@ const RECOMMENDATION_TABLE = Object.freeze({
 });
 
 /**
- * Default probes object. Each key is a function returning a value (or null/undefined if unavailable).
- * Probes are synchronous and use browser globals; inject fakes in tests.
+ * Convert navigator.deviceMemory (reported in GB) to MB. The scoring and
+ * budgets across this module use MB everywhere, and Chrome reports GB, so
+ * previously an 8 GB machine looked like 8 MB and scored as the weakest tier.
  */
+export function deviceMemoryToMb(reportedGb) {
+  const gb = parseInt(reportedGb, 10);
+  if (!Number.isFinite(gb) || gb <= 0) return null;
+  return gb * 1024;
+}
+
+/**
+ * Estimate total RAM in MB. In browsers the only disclosure is
+ * navigator.deviceMemory (GB, capped at 8); Firefox/Safari disclose nothing,
+ * so we fall back to a conservative core-count-based estimate there.
+ */
+export function estimateMemoryMb({ deviceMemory, hardwareConcurrency, formFactor }) {
+  const reported = deviceMemoryToMb(deviceMemory);
+  if (reported !== null) return reported;
+  const cores = parseInt(hardwareConcurrency, 10) || 0;
+  if (formFactor === 'desktop') {
+    if (cores >= 8) return 16384;
+    if (cores >= 4) return 8192;
+    return 4096;
+  }
+  if (formFactor === 'tablet') {
+    if (cores >= 8) return 8192;
+    if (cores >= 4) return 4096;
+    return 2048;
+  }
+  if (cores >= 4) return 4096;
+  if (cores >= 2) return 2048;
+  return null;
+}
+
+/**
+ * Classify a device form factor from browser signals. Pure: receives
+ * extracted signals so it is testable and safe to run in Node.
+ */
+export function classifyFormFactor({ mobile, touchPoints, width, ua } = {}) {
+  if (!ua) return null;
+  if (/^Node\.js/i.test(ua)) return null;
+  const isMobile = !!mobile;
+  if (isMobile && width > 0) return width > 800 ? 'tablet' : 'phone';
+  if (/Tablet|iPad|PlayBook|Silk/i.test(ua)) return 'tablet';
+  if (isMobile) return 'phone';
+  if (width > 0) {
+    if (touchPoints > 0 && width >= 1024) return 'tablet';
+    if (width >= 1440) return 'desktop';
+    return 'laptop';
+  }
+  if (ua.includes('Windows') || ua.includes('Macintosh') || ua.includes('X11') || ua.includes('CrOS')) return 'laptop';
+  return null;
+}
+
+/** Best-effort GPU string for parseGpuKind (browser only, never throws). */
+export function defaultGpuLabel() {
+  if (typeof document === 'undefined') return null;
+  try {
+    const canvas = document.createElement('canvas');
+    if (!canvas || typeof canvas.getContext !== 'function') return null;
+    const gl2 = canvas.getContext('webgl2');
+    if (gl2) {
+      const info = gl2.getExtension('WEBGL_debug_renderer_info');
+      const renderer = info ? String(gl2.getParameter(info.UNMASKED_RENDERER_WEBGL) || '') : '';
+      return renderer ? `WebGL 2.0 (${renderer})` : 'WebGL 2.0';
+    }
+    if (canvas.getContext('webgl') || canvas.getContext('experimental-webgl')) return 'WebGL 1.0';
+    return null;
+  } catch { return null; }
+}
+
+/** Default probes object. Each key is a function returning a value (or null/undefined if unavailable). */
 export function defaultProbes() {
   return {
-    formFactor: () => null,
-    gpu:        () => null,
-    cores:      () => (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : null),
-    memoryMb:   () => (typeof navigator !== 'undefined' ? (navigator.deviceMemory || null) : null),
-    wasmSimd:   () => {
+    formFactor: () => {
+      if (typeof navigator === 'undefined') return null;
+      return classifyFormFactor({
+        mobile: typeof navigator.userAgentData !== 'undefined' && navigator.userAgentData ? !!navigator.userAgentData.mobile : null,
+        touchPoints: typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints : 0,
+        width: typeof window !== 'undefined' && window.screen && window.screen.width ? window.screen.width : 0,
+        ua: (typeof navigator.userAgent === 'string' && navigator.userAgent) || ''
+      });
+    },
+    gpu: defaultGpuLabel,
+    cores: () => (typeof navigator !== 'undefined' ? navigator.hardwareConcurrency : null),
+    memoryMb: () => {
+      if (typeof navigator === 'undefined') return null;
+      let formFactor = null;
+      if (navigator.userAgent) {
+        formFactor = classifyFormFactor({
+          mobile: typeof navigator.userAgentData !== 'undefined' && navigator.userAgentData ? !!navigator.userAgentData.mobile : null,
+          touchPoints: typeof navigator.maxTouchPoints === 'number' ? navigator.maxTouchPoints : 0,
+          width: typeof window !== 'undefined' && window.screen && window.screen.width ? window.screen.width : 0,
+          ua: navigator.userAgent
+        });
+      }
+      return estimateMemoryMb({
+        deviceMemory: navigator.deviceMemory,
+        hardwareConcurrency: navigator.hardwareConcurrency,
+        formFactor
+      });
+    },
+    wasmSimd: () => {
       try {
         if (typeof WebAssembly === 'undefined') return false;
         const mod = new WebAssembly.Module(new Uint8Array([0,97,115,109,1,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]));
@@ -160,23 +253,33 @@ export function getModelFit(profile, meta) {
   if (!profile || !meta) return { score: 0, verdict: 'unknown', reason: 'Missing profile or model metadata' };
   const tier = profile.tier || DEVICE_TIERS.MID;
   const budget = TIER_BUDGET_MB[tier] || TIER_BUDGET_MB.mid;
+  // Real RAM beats generic tier caps: a 4GB+ device can host meaningfully
+  // more than the conservative tier defaults, so grade against the actual
+  // disclosed memory (a 1B q8 generator is ~2.3GB resident, not "too heavy"
+  // on every machine with 8GB+).
+  let ideal = budget.ideal;
+  let heavy = budget.heavy;
+  if (profile.memoryMb && profile.memoryMb >= 4096) {
+    ideal = Math.max(ideal, Math.round(profile.memoryMb * 0.25));
+    heavy = Math.max(heavy, Math.round(profile.memoryMb * 0.5));
+  }
   const dtypeFactor = DTYPE_MEM_FACTOR[profile.dtype] || 1.0;
   const effectiveMb = (meta.sizeMb || 0) * dtypeFactor;
   let verdict, score;
 
-  if (effectiveMb <= budget.ideal) {
+  if (effectiveMb <= ideal) {
     verdict = 'ideal';
     score = 100;
-  } else if (effectiveMb <= budget.heavy) {
+  } else if (effectiveMb <= heavy) {
     verdict = 'ok';
-    score = 70 - Math.round(((effectiveMb - budget.ideal) / (budget.heavy - budget.ideal)) * 30);
+    score = 70 - Math.round(((effectiveMb - ideal) / (heavy - ideal)) * 30);
   } else {
-    const excess = effectiveMb - budget.heavy;
+    const excess = effectiveMb - heavy;
     verdict = excess > 200 ? 'too-heavy' : 'heavy';
     score = Math.max(10, 40 - Math.round(excess / 20));
   }
 
-  const reason = formatFitReason(meta, effectiveMb, budget, tier, verdict);
+  const reason = formatFitReason(meta, effectiveMb, { ideal, heavy }, tier, verdict);
   return Object.freeze({ score, verdict, reason });
 }
 
@@ -218,7 +321,10 @@ export function describeDevice(profile) {
   const ff = profile.formFactor && profile.formFactor !== 'unknown' ? profile.formFactor : 'unknown device';
   const parts = [ff.charAt(0).toUpperCase() + ff.slice(1)];
   if (profile.cores) parts.push(`${profile.cores} cores`);
-  if (profile.memoryMb) parts.push(`${(profile.memoryMb / 1024).toFixed(0)} GB`);
+  if (profile.memoryMb) {
+    const gb = Math.round(profile.memoryMb / 1024);
+    parts.push(profile.memoryMb >= 8192 ? `≥${gb} GB` : `${gb} GB`);
+  }
   if (profile.gpuKind && profile.gpuKind !== 'none') parts.push(profile.gpuKind.toUpperCase());
   else parts.push('integrated GPU');
   if (profile.wasmSimd) parts.push('WASM SIMD');

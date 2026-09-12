@@ -24,7 +24,8 @@ import { runPipeline, classifyIntent, extractEntities, generateResponse, generat
 import { loadConfiguration, init, agentComm, googleAPI } from './app/init.js';
 import { Skill, SkillLibrary, skillLibrary, BUILTIN_SKILLS, buildSystemPrompt } from './core/skills.js';
 import { compactChat, buildDigestSummary } from './core/compaction.js';
-import { detectDevice, defaultProbes, getModelFit, recommendModelSet, describeDevice, DEVICE_TIERS } from './core/device.js';
+import { detectDevice, defaultProbes, deviceMemoryToMb, estimateMemoryMb, classifyFormFactor, getModelFit, recommendModelSet, describeDevice, DEVICE_TIERS } from './core/device.js';
+import { crc32, zipBytes, inspectZip, buildDocx, buildXlsx, saveFile, requestFolder, restoreFolder, hasFolderHandle, getFolderName, setFolderHandle, clearFolderHandle } from './core/files.js';
 import { startPiRpc, createPiClient, createPiServer, PiRpcError, PI_NODE, buildRequest, defaultMethods } from './app/pi/pi-rpc.js';
 
 export {
@@ -120,10 +121,25 @@ export {
   defaultMethods,
   detectDevice,
   defaultProbes,
+  deviceMemoryToMb,
+  estimateMemoryMb,
+  classifyFormFactor,
   getModelFit,
   recommendModelSet,
   describeDevice,
-  DEVICE_TIERS
+  DEVICE_TIERS,
+  crc32,
+  zipBytes,
+  inspectZip,
+  buildDocx,
+  buildXlsx,
+  saveFile,
+  requestFolder,
+  restoreFolder,
+  hasFolderHandle,
+  getFolderName,
+  setFolderHandle,
+  clearFolderHandle
 };
 
 if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
