@@ -2707,6 +2707,8 @@ async function runAllTests() {
       const origIssues = state.configIssues;
       try {
         const trimmed = (state.config.modelSettings.availableModels || []).slice(0, 3);
+        trimmed.push({ id: 'Xenova/fake-stale-model', name: 'Stale', sizeMb: 1 });
+        trimmed.push({ id: 'Xenova/flan-t5-large', name: 'Decommissioned', sizeMb: 1 });
         trimmed.push({ id: 'Xenova/user-custom-model', name: 'User Custom', sizeMb: 1 });
         await configAPI.updateConfig('modelSettings.availableModels', trimmed);
         await configAPI.updateConfig('modelSettings.dtype', 'fp16');
@@ -2716,6 +2718,8 @@ async function runAllTests() {
         assert(catalog.some(m => m.id === 'Xenova/bge-large-en-v1.5'), 'shipped ultra embedder must re-appear from disk catalog');
         assert(catalog.some(m => m.id === 'Xenova/llama-3.2-3B-Instruct'), 'shipped ultra generator must re-appear from disk catalog');
         assert(catalog.some(m => m.id === 'Xenova/user-custom-model'), 'user-added model must be preserved');
+        assert(catalog.some(m => m.id === 'Xenova/fake-stale-model'), 'generic user custom models must still be preserved');
+        assert(!catalog.some(m => m.id === 'Xenova/flan-t5-large'), 'decommissioned ids must not be resurrected by the merge');
         assert(catalog.length >= 32, `catalog restored to full size, got ${catalog.length}`);
         assert(res.config.modelSettings.dtype === 'fp16', 'user dtype override must survive the merge');
       } finally {

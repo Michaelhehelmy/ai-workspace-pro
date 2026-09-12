@@ -101,10 +101,28 @@ function overlay(target, patch) {
   }
 }
 
+/**
+ * Model ids that were once in the shipped catalog but are no longer, because
+ * they have no public ONNX build (or proved unstable). They only produce CORS
+ * 404 noise when loaded. They are dropped from the merged catalog so stale
+ * persisted configs self-clean instead of resurrecting phantom models.
+ */
+export const DECOMMISSIONED_MODELS = new Set([
+  'Xenova/deberta-v3-large-mnli',
+  'Xenova/bert-large-NER',
+  'Xenova/flan-t5-large',
+  'Xenova/flan-t5-xl',
+  'Xenova/SmolLM-1.7B-Instruct',
+  'Xenova/gemma-2b-it',
+  'Xenova/OpenHermes-2.5-Mistral-7B',
+  'Xenova/mistral-7b-instruct-v0.2',
+  'onnx-community/gemma-3-1b-it-ONNX'
+]);
+
 function unionModels(shipped, saved) {
   const byId = new Map();
-  for (const m of shipped) if (m && m.id) byId.set(m.id, m);
-  for (const m of saved) if (m && m.id && !byId.has(m.id)) byId.set(m.id, m);
+  for (const m of shipped) if (m && m.id && !DECOMMISSIONED_MODELS.has(m.id)) byId.set(m.id, m);
+  for (const m of saved) if (m && m.id && !byId.has(m.id) && !DECOMMISSIONED_MODELS.has(m.id)) byId.set(m.id, m);
   return Array.from(byId.values());
 }
 
