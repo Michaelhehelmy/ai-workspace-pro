@@ -208,6 +208,30 @@ export class WorkspaceDB {
     }
   }
 
+  /**
+   * Reset every store (memory mirrors + IndexedDB). Used by hermetic test
+   * suites so repeated browser runs start from a clean state instead of
+   * hydrating leftovers persisted across earlier runs.
+   */
+  async clearAll() {
+    this.memoryStores.kv.clear();
+    this.memoryStores.records.clear();
+    this.memoryStores.chat.clear();
+    if (!this.db) return Promise.resolve();
+    return new Promise(resolve => {
+      try {
+        const tx = this.db.transaction(['kv', 'records', 'chat'], 'readwrite');
+        tx.objectStore('kv').clear();
+        tx.objectStore('records').clear();
+        tx.objectStore('chat').clear();
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => resolve();
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
   async addChatMessage(msg) {
     const chatMsg = {
       id: msg.id || 'm_' + Date.now() + '_' + Math.random().toString(36).substring(2, 6),

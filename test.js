@@ -93,6 +93,13 @@ import worker from './worker/index.js';
 const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
 const isBrowser = typeof window !== 'undefined';
 
+// Browser runner shim: the suite reads env vars (runtime config overrides, Pi
+// RPC gating) exactly like the Node runner, so give the page a minimal
+// `process` global. Node's real global is left untouched.
+if (typeof process === 'undefined') {
+  globalThis.process = { env: {} };
+}
+
 // Real-model suite only runs in Node, is skipped on explicit request, and never
 // runs when the process was launched already disabled (respecting user intent).
 const launchedModelDisabled = isNode && process.env.MODELS_DISABLED === '1';
@@ -113,6 +120,18 @@ function assertEquals(actual, expected, message) {
   if (actual !== expected) {
     throw new Error(message || `Expected [${expected}], got [${actual}]`);
   }
+}
+
+// Fresh, empty database for hermetic tests. In the browser the same-named
+// IndexedDB survives page reloads and repeated "Run All Tests" clicks, so
+// leftover rows from an earlier run would pollute the assertions (e.g. Stable
+// sort ties, chat message counts). clearAll() makes every run start clean,
+// matching the Node runner's per-process in-memory store.
+async function freshDb(name) {
+  const db = new WorkspaceDB(name);
+  await db.init();
+  await db.clearAll().catch(() => {});
+  return db;
 }
 
 async function runTest(suite, name, fn) {
@@ -169,8 +188,7 @@ async function runAllTests() {
   state.activeCharacterId = 'aria';
   state.activeBusinessId = 'personal';
 
-  const testDb = new WorkspaceDB('test-ai-workspace');
-  await testDb.init();
+  const testDb = await freshDb('test-ai-workspace');
 
   const agentComm = new AgentCommunication(state, testDb);
   const googleAPI = new GoogleAPI(state, testDb);
@@ -821,8 +839,7 @@ async function runAllTests() {
   });
 
   await runTest('Compaction', 'compactChat collapses older messages and preserves the tail', async () => {
-    const testDb = new WorkspaceDB('TestDB_Compaction');
-    await testDb.init();
+    const testDb = await freshDb('TestDB_Compaction');
     const biz = 'personal';
     const created = [];
     for (let i = 0; i < 15; i++) {
@@ -845,16 +862,14 @@ async function runAllTests() {
   });
 
   await runTest('Compaction', 'compactChat is a no-op below the threshold', async () => {
-    const testDb = new WorkspaceDB('TestDB_CompactionNoop');
-    await testDb.init();
+    const testDb = await freshDb('TestDB_CompactionNoop');
     await testDb.addChatMessage({ businessId: 'personal', role: 'user', content: 'hi', timestamp: 1 });
     const result = await compactChat(testDb, 'personal', { keepRecent: 10 });
     assertEquals(result, null);
   });
 
   await runTest('Compaction', 'compactChat accepts a custom summarizer', async () => {
-    const testDb = new WorkspaceDB('TestDB_CompactionSumm');
-    await testDb.init();
+    const testDb = await freshDb('TestDB_CompactionSumm');
     for (let i = 0; i < 12; i++) {
       await testDb.addChatMessage({ businessId: 'personal', role: 'user', content: 'seed', timestamp: 1000 + i });
     }
