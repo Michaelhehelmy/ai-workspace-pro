@@ -547,7 +547,8 @@ export function renderModelsPanel() {
         const rec = M.getDeviceRecommendations(detectedDevice);
         recListEl.innerHTML = rec.stages.map(s => {
           const diff = s.recommended && s.recommended !== s.current;
-          return `<li class="pe-2"><span class="badge bg-body-secondary text-body-secondary border me-1">${escapeHtml(s.stage)}</span>${escapeHtml(s.name)}${s.sizeMb ? ` (${s.sizeMb}MB)` : ''}${diff ? ' <span class="text-warning-emphasis">recommended</span>' : ' <span class="text-success-emphasis">current</span>'}</li>`;
+          const badge = !s.recommended ? '<span class="text-body-secondary"> · no model</span>' : (diff ? ' <span class="text-warning-emphasis">recommended</span>' : ' <span class="text-success-emphasis">current</span>');
+          return `<li class="pe-2"><span class="badge bg-body-secondary text-body-secondary border me-1">${escapeHtml(s.stage)}</span>${escapeHtml(s.name)}${s.sizeMb ? ` (${s.sizeMb}MB)` : ''}${badge}</li>`;
         }).join('');
       }
       if (applyBtn) applyBtn.disabled = false;
@@ -582,6 +583,9 @@ export function renderModelsPanel() {
 
       if (catalogBody) {
         const list = M.getModelCatalog();
+        if (!list.length) {
+          catalogBody.innerHTML = `<tr><td colspan="6" class="small text-body-secondary py-2">No models in the catalog yet — the catalog is discovered at runtime. Use <strong>Browse Hugging Face</strong> above (or it auto-scans on first load).</td></tr>`;
+        } else {
         catalogBody.innerHTML = list.map(m => {
           const meta = M.getModelMeta(m.id) || m;
           const typeBadge = { embedder: 'info', classifier: 'warning', ner: 'danger', generator: 'success' }[meta.type] || 'secondary';
@@ -597,6 +601,7 @@ export function renderModelsPanel() {
             </td>
           </tr>`;
         }).join('');
+        }
       }
 
       for (const s of stages) {
@@ -611,8 +616,64 @@ export function renderModelsPanel() {
           unloadBtn.disabled = !s.loaded;
         }
       }
+
+      maybeBootstrapDynamicCatalog({ auto: true }).catch(() => {});
     } catch (e) {}
   })();
+}
+
+// ── First-run dynamic catalog bootstrap ──────────────────────────────────────
+// The shipped catalog is empty by design (config.json has no hardcoded
+// models). On first load in the real UI we seed it from Hugging Face (top
+// transformers.js models per role), then apply the best-fit recommendation for
+// the detected device. `{ auto: true }` only attempts a scan once per session;
+// explicit calls (Apply Recommendations button) may retry.
+let hubAutoScanDone = false;
+let hubBootstrapActive = false;
+
+export async function maybeBootstrapDynamicCatalog(opts = {}) {
+  if (!isBrowser) return false;
+  if (hubBootstrapActive) return false;
+  if (window.__MODELS_DISABLED__ === true) return false;
+  if (!document.getElementById('hubResults')) return false; // real Models tab DOM only
+  const M = await import('./models.js');
+  if (M.getModelCatalog().length > 0) { if (opts.auto) hubAutoScanDone = true; return false; }
+  if (opts.auto && hubAutoScanDone) return false;
+
+  hubBootstrapActive = true;
+  try {
+    const HUB = await import('./ai/hub.js');
+    const entries = await HUB.bootstrapCatalog({ limit: 5 });
+    if (!entries.length) {
+      const hubStatus = document.getElementById('hubStatus');
+      if (hubStatus) hubStatus.textContent = 'Hugging Face unreachable — no models yet. Retry: Search above.';
+      return false;
+    }
+    const ms = state.config?.modelSettings || {};
+    const newList = Array.isArray(ms.availableModels) ? [...ms.availableModels] : [];
+    for (const e of entries) if (!newList.some(m => m.id === e.id)) newList.push(e);
+    await configAPI.updateConfig('modelSettings.availableModels', newList);
+
+    const profile = detectedDevice || detectDevice();
+    const next = M.buildRecommendedModelSettings(profile);
+    if (next) {
+      await configAPI.updateConfig('modelSettings', next);
+      await db.setKV('deviceRecApplied', JSON.stringify({ tier: profile.tier, at: Date.now() }));
+    }
+    populateModelSelects();
+    renderConfigEditor();
+    await renderModelsPanel();
+    showToast(`Discovered ${newList.length} models from Hugging Face and applied the best fit for your device.`, 'success');
+    return true;
+  } catch (err) {
+    const hubStatus = document.getElementById('hubStatus');
+    if (hubStatus) hubStatus.textContent = 'Hugging Face unreachable — no models loaded yet. Retry: Search above.';
+    if (opts.auto) console.warn('catalog bootstrap failed:', err && err.message ? err.message : err);
+    return false;
+  } finally {
+    hubBootstrapActive = false;
+    if (opts.auto) hubAutoScanDone = true;
+  }
 }
 
 async function applyStageSelection(stageKey, modelId) {
@@ -757,6 +818,11 @@ export function initModelsTab() {
       const M = await import('./models.js');
       const profile = detectedDevice || detectDevice();
       try {
+        if (!M.getModelCatalog().length) {
+          showToast('No models in the catalog yet — scanning Hugging Face…', 'info');
+          const ok = await maybeBootstrapDynamicCatalog();
+          if (!ok) { showToast('Could not load models from Hugging Face. Check the network and try Browse again.', 'error'); return; }
+        }
         const next = M.buildRecommendedModelSettings(profile);
         if (!next) throw new Error('Configuration not loaded — cannot apply recommendations.');
         if (statusEl) statusEl.textContent = 'Applying…';

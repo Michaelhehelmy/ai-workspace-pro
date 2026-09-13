@@ -139,6 +139,36 @@ let passCount = 0;
 let failCount = 0;
 const testResults = [];
 
+// Fully-dynamic catalog: the shipped config carries zero models, so suites that
+// exercise catalogs/recommendations seed a deterministic synthetic catalog with
+// sizeMb + downloads (fit and popularity drive the picks — see core/device.js).
+const TEST_CATALOG = [
+  { id: 'Xenova/all-MiniLM-L6-v2', type: 'embedder', name: 'MiniLM-L6-v2', sizeMb: 90, downloads: 400000 },
+  { id: 'Xenova/bge-base-en-v1.5', type: 'embedder', name: 'bge-base-en-v1.5', sizeMb: 400, downloads: 20000000 },
+  { id: 'Xenova/bge-large-en-v1.5', type: 'embedder', name: 'bge-large-en-v1.5', sizeMb: 1000, downloads: 60000000 },
+  { id: 'Xenova/mobilebert-uncased-mnli', type: 'classifier', name: 'MobileBERT Zero-Shot', sizeMb: 110, downloads: 800000 },
+  { id: 'Xenova/bart-large-mnli', type: 'classifier', name: 'BART MNLI', sizeMb: 1600, downloads: 1200000 },
+  { id: 'Xenova/bert-base-NER', type: 'ner', name: 'BERT Base NER', sizeMb: 178, downloads: 600000 },
+  { id: 'Xenova/LaMini-Flan-T5-248M', type: 'generator', name: 'LaMini-Flan-T5-248M', sizeMb: 260, downloads: 700000 },
+  { id: 'Xenova/llama-3.2-3B-Instruct', type: 'generator', name: 'Llama 3.2 3B Instruct', sizeMb: 3140, downloads: 900000 }
+];
+
+function seedCatalog(list) {
+  if (!state.config?.modelSettings) throw new Error('state.config.modelSettings must be loaded before seeding');
+  state.config.modelSettings.availableModels = (list || TEST_CATALOG).map(m => ({ ...m }));
+}
+
+function assignStageDefaults() {
+  const ms = state.config.modelSettings;
+  ms.embedder = 'Xenova/all-MiniLM-L6-v2';
+  ms.classifier = 'Xenova/mobilebert-uncased-mnli';
+  ms.generator = 'Xenova/LaMini-Flan-T5-248M';
+  for (const [key, model] of Object.entries({ encoder: 'Xenova/all-MiniLM-L6-v2', intent: 'Xenova/mobilebert-uncased-mnli', tagger: 'Xenova/bert-base-NER', dialog: 'Xenova/LaMini-Flan-T5-248M' })) {
+    const st = (ms.pipeline?.stages || []).find(s => s.key === key);
+    if (st) st.model = model;
+  }
+}
+
 function assert(condition, message) {
   if (!condition) {
     throw new Error(message || 'Assertion failed');
@@ -565,9 +595,15 @@ async function runAllTests() {
     assert(plain.includes('[E_INFER]') && plain.includes('plain failure') && plain.includes('run it again'), 'plain-object formatting');
   });
 
+  await runTest('Models', 'dynamic catalog starts empty (fully-dynamic contract) then is seeded for the suite', () => {
+    assert(getModelCatalog().length === 0, 'shipped config must carry zero hardcoded models');
+    seedCatalog(TEST_CATALOG);
+    assignStageDefaults();
+  });
+
   await runTest('Models', 'getModelCatalog exposes the expanded catalog with size metadata', () => {
     const catalog = getModelCatalog();
-    assert(catalog.length >= 14, `expected an expanded catalog, got ${catalog.length}`);
+    assert(catalog.length >= 8, `expected the seeded catalog, got ${catalog.length}`);
     for (const m of catalog) {
       assert(m.id && m.name && m.type, 'every catalog entry needs id/name/type');
     }
@@ -580,10 +616,10 @@ async function runAllTests() {
 
   await runTest('Models', 'getModelsForStage narrows the catalog per stage and flags the configured model', () => {
     const enc = getModelsForStage('encoder');
-    assert(enc.length >= 5, `expected multiple embedder choices, got ${enc.length}`);
+    assert(enc.length >= 3, `expected multiple embedder choices, got ${enc.length}`);
     assert(enc.every(m => m.type === 'embedder' && m.stage === 'encoder'), 'encoder stage options must all be embedders');
     assert(enc.some(m => m.id === 'Xenova/all-MiniLM-L6-v2' && m.current), 'current embedder must be flagged');
-    assert(enc.some(m => m.id === 'Xenova/gte-small'), 'verified embedders should be selectable');
+    assert(enc.some(m => m.id === 'Xenova/bge-base-en-v1.5'), 'verified embedders should be selectable');
 
     const tag = getModelsForStage('tagger');
     assert(tag.some(m => m.id === 'Xenova/bert-base-NER' && m.current), 'configured NER model must be present and flagged');
@@ -591,8 +627,8 @@ async function runAllTests() {
   });
 
   await runTest('Models', 'getModelMeta resolves catalog metadata by id', () => {
-    const meta = getModelMeta('Xenova/gte-small');
-    assert(meta && meta.type === 'embedder' && typeof meta.sizeMb === 'number', 'gte-small metadata should resolve');
+    const meta = getModelMeta('Xenova/bge-base-en-v1.5');
+    assert(meta && meta.type === 'embedder' && typeof meta.sizeMb === 'number', 'bge-base metadata should resolve');
     assertEquals(getModelMeta('Xenova/does-not-exist'), null);
   });
 
@@ -637,12 +673,12 @@ async function runAllTests() {
     assert(empty instanceof ModelError && empty.code === 'E_LOAD_MODEL', 'empty model id must throw a typed error');
   });
 
-  await runTest('Models', 'defaultModelSettings rebuilds defaults and preserves the catalog', () => {
+  await runTest('Models', 'defaultModelSettings rebuilds a default-free config and preserves the catalog', () => {
     const before = state.config.modelSettings.availableModels.length;
     const d = defaultModelSettings();
     assertEquals(d.dtype, 'q8');
-    assertEquals(d.embedder, 'Xenova/all-MiniLM-L6-v2');
-    assert(d.pipeline.stages.some(s => s.key === 'dialog' && s.model === 'Xenova/LaMini-Flan-T5-248M'), 'dialog default should be the balanced model');
+    assertEquals(d.embedder, null, 'no hardcoded embedder in a fully-dynamic config');
+    assert(d.pipeline.stages.some(s => s.key === 'dialog' && s.model === null), 'dialog stage must start unassigned');
     assertEquals(d.availableModels.length, before, 'reset must keep the catalog');
   });
 
@@ -1066,8 +1102,9 @@ async function runAllTests() {
   await runTest('Device', 'recommendModelSet selects small models on low tier and larger on high', () => {
     const low = detectDevice({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
     const high = detectDevice({ formFactor: () => 'desktop', cores: () => 8, memoryMb: () => 8192, gpu: () => 'WebGL2', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
-    const planLow = recommendModelSet(low);
-    const planHigh = recommendModelSet(high);
+    const twoEmbedders = TEST_CATALOG.filter(m => m.type === 'embedder' && m.id !== 'Xenova/bge-large-en-v1.5');
+    const planLow = recommendModelSet(low, twoEmbedders);
+    const planHigh = recommendModelSet(high, twoEmbedders);
     assert(planLow.tier === 'low' && planLow.dtype, 'low plan should carry tier and dtype');
     assert(planLow.stages.encoder.model !== planHigh.stages.encoder.model, 'encoder recommendation should differ by tier');
     assert(planHigh.stages.encoder.model.includes('bge-base'), `high tier should pick bge-base, got ${planHigh.stages.encoder.model}`);
@@ -1078,8 +1115,8 @@ async function runAllTests() {
   await runTest('Device', 'recommendModelSet steps up to higher models on an ultra device', () => {
     const ultra = detectDevice({ formFactor: () => 'desktop', cores: () => 16, memoryMb: () => 16384, gpu: () => 'WebGPU', wasm: () => true, wasmSimd: () => true, network: () => null, battery: () => null });
     assert(ultra.tier === 'ultra', `16-core/16GB/WebGPU desktop should be ultra, got ${ultra.tier}`);
-    const plan = recommendModelSet(ultra);
-    const catalog = getModelCatalog();
+    const plan = recommendModelSet(ultra, TEST_CATALOG);
+    const catalog = TEST_CATALOG;
     for (const key of ['encoder', 'intent', 'tagger', 'dialog']) {
       const id = plan.stages[key].model;
       const meta = catalog.find(m => m.id === id);
@@ -1153,27 +1190,83 @@ async function runAllTests() {
   });
 
   await runTest('Device', 'getDeviceRecommendations maps stages to catalog ids', async () => {
-    const rec = getDeviceRecommendations({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
-    assert(rec.profile && rec.profile.tier, 'profile attached');
-    assert(rec.stages.length === 4, `expected 4 stage recommendations, got ${rec.stages.length}`);
-    for (const s of rec.stages) {
-      assert(s.key && s.recommended && typeof s.recommended === 'string', `stage ${s.key} missing recommendation`);
-      assert(s.reason && s.reason.length > 0, `stage ${s.key} missing reason`);
-      const meta = getModelCatalog().find(m => m.id === s.recommended);
-      assert(!meta || typeof meta.sizeMb === 'number', `recommended id ${s.recommended} has no size in catalog`);
+    const saved = state.config.modelSettings.availableModels;
+    try {
+      seedCatalog(TEST_CATALOG);
+      const rec = getDeviceRecommendations({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
+      assert(rec.profile && rec.profile.tier, 'profile attached');
+      assert(rec.stages.length === 4, `expected 4 stage recommendations, got ${rec.stages.length}`);
+      for (const s of rec.stages) {
+        assert(s.key && s.recommended && typeof s.recommended === 'string', `stage ${s.key} missing recommendation`);
+        assert(s.reason && s.reason.length > 0, `stage ${s.key} missing reason`);
+        const meta = TEST_CATALOG.find(m => m.id === s.recommended);
+        assert(!!meta && typeof meta.sizeMb === 'number', `recommended id ${s.recommended} must come from the catalog with a size`);
+      }
+    } finally {
+      state.config.modelSettings.availableModels = saved;
+    }
+  });
+
+  await runTest('Device', 'getDeviceRecommendations degrades gracefully on an empty catalog', async () => {
+    const saved = state.config.modelSettings.availableModels;
+    const savedMs = JSON.parse(JSON.stringify(state.config.modelSettings));
+    try {
+      seedCatalog([]);
+      const ms = state.config.modelSettings;
+      ms.embedder = null; ms.classifier = null; ms.generator = null;
+      for (const st of ms.pipeline?.stages || []) st.model = null;
+      const rec = getDeviceRecommendations({ formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null });
+      assert(rec.stages.length === 4, 'still four stages with no catalog');
+      for (const s of rec.stages) {
+        assertEquals(s.recommended, null, `stage ${s.key} must have no recommendation on empty catalog`);
+        assert(s.name && s.reason && s.reason.includes('Browse'), `stage ${s.key} should point the user at Browse, got ${s.reason}`);
+      }
+    } finally {
+      state.config.modelSettings = savedMs;
     }
   });
 
   await runTest('Device', 'buildRecommendedModelSettings persists a coherent device plan', async () => {
     const probes = { formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null };
-    const next = buildRecommendedModelSettings(probes);
-    assert(next, 'should build for a loaded config');
-    assert(next.dtype === 'q8', `dtype should be q8 for low tier, got ${next.dtype}`);
-    assert(next.embedder && next.classifier && next.generator, 'top-level helper ids set');
-    assert(Array.isArray(next.pipeline.stages) && next.pipeline.stages.length === 4, 'all four stages present');
-    const enc = next.pipeline.stages.find(s => s.key === 'encoder');
-    assert(enc.model === next.embedder, 'pipeline stage and top-level helper agree');
-    assert(next.embedder.includes('MiniLM-L6'), `low tier embedder should be MiniLM-L6, got ${next.embedder}`);
+    const saved = state.config.modelSettings.availableModels;
+    try {
+      seedCatalog(TEST_CATALOG);
+      const next = buildRecommendedModelSettings(probes);
+      assert(next, 'should build for a loaded config');
+      assert(next.dtype === 'q8', `dtype should be q8 for low tier, got ${next.dtype}`);
+      assert(next.embedder && next.classifier && next.generator, 'top-level helper ids set');
+      assert(Array.isArray(next.pipeline.stages) && next.pipeline.stages.length === 4, 'all four stages present');
+      const enc = next.pipeline.stages.find(s => s.key === 'encoder');
+      assert(enc.model === next.embedder, 'pipeline stage and top-level helper agree');
+      assert(next.embedder.includes('MiniLM-L6'), `low tier embedder should be MiniLM-L6, got ${next.embedder}`);
+    } finally {
+      state.config.modelSettings.availableModels = saved;
+    }
+  });
+
+  await runTest('Device', 'buildRecommendedModelSettings is null-safe on an empty catalog and preserves configured models', async () => {
+    const probes = { formFactor: () => 'phone', cores: () => 4, memoryMb: () => 2048, gpu: () => null, wasm: () => true, wasmSimd: () => false, network: () => null, battery: () => null };
+    const savedMs = JSON.parse(JSON.stringify(state.config.modelSettings));
+    try {
+      seedCatalog([]);
+      // unassigned config → no throw, no fabricated models
+      const ms = state.config.modelSettings;
+      ms.embedder = null; ms.classifier = null; ms.generator = null;
+      for (const st of ms.pipeline?.stages || []) st.model = null;
+      const next = buildRecommendedModelSettings(probes);
+      assert(next, 'should still produce a plan object');
+      assertEquals(next.embedder, null);
+      assert(next.pipeline.stages.every(s => s.model === null), 'no stage should be assigned on an empty catalog');
+
+      // user-configured model → kept, not clobbered, by a recommendation-less plan
+      ms.generator = 'Xenova/LaMini-Flan-T5-248M';
+      const st = ms.pipeline.stages.find(s => s.key === 'dialog');
+      st.model = 'Xenova/LaMini-Flan-T5-248M';
+      const next2 = buildRecommendedModelSettings(probes);
+      assertEquals(next2.generator, 'Xenova/LaMini-Flan-T5-248M', 'current configured model must survive an empty-catalog recommendation');
+    } finally {
+      state.config.modelSettings = savedMs;
+    }
   });
 
   // 5. Worker deployment target (Phase 5 hermetic)
@@ -2702,25 +2795,25 @@ async function runAllTests() {
       }
     });
 
-    await runTest('Init', 'loadConfiguration merges a saved config but keeps newly shipped models and user overrides', async () => {
+    await runTest('Init', 'loadConfiguration merges a saved config but scrubs decommissioned ids (empty shipped catalog)', async () => {
       const origConfig = state.config;
       const origIssues = state.configIssues;
       try {
-        const trimmed = (state.config.modelSettings.availableModels || []).slice(0, 3);
-        trimmed.push({ id: 'Xenova/fake-stale-model', name: 'Stale', sizeMb: 1 });
-        trimmed.push({ id: 'Xenova/flan-t5-large', name: 'Decommissioned', sizeMb: 1 });
-        trimmed.push({ id: 'Xenova/user-custom-model', name: 'User Custom', sizeMb: 1 });
-        await configAPI.updateConfig('modelSettings.availableModels', trimmed);
+        const saved = [
+          { id: 'Xenova/fake-stale-model', name: 'Stale', sizeMb: 1 },
+          { id: 'Xenova/flan-t5-large', name: 'Decommissioned', sizeMb: 1 },
+          { id: 'Xenova/user-custom-model', name: 'User Custom', sizeMb: 1 }
+        ];
+        await configAPI.updateConfig('modelSettings.availableModels', saved);
         await configAPI.updateConfig('modelSettings.dtype', 'fp16');
 
         const res = await loadConfiguration();
         const catalog = res.config.modelSettings.availableModels || [];
-        assert(catalog.some(m => m.id === 'Xenova/bge-large-en-v1.5'), 'shipped ultra embedder must re-appear from disk catalog');
-        assert(catalog.some(m => m.id === 'Xenova/llama-3.2-3B-Instruct'), 'shipped ultra generator must re-appear from disk catalog');
         assert(catalog.some(m => m.id === 'Xenova/user-custom-model'), 'user-added model must be preserved');
         assert(catalog.some(m => m.id === 'Xenova/fake-stale-model'), 'generic user custom models must still be preserved');
         assert(!catalog.some(m => m.id === 'Xenova/flan-t5-large'), 'decommissioned ids must not be resurrected by the merge');
-        assert(catalog.length >= 32, `catalog restored to full size, got ${catalog.length}`);
+        assert(!catalog.some(m => m.id === 'Xenova/bge-large-en-v1.5'), 'no hardcoded models may be re-added from an empty shipped catalog');
+        assert(catalog.length === 2, `catalog must be exactly the user's catalog minus decommissioned ids, got ${catalog.length}`);
         assert(res.config.modelSettings.dtype === 'fp16', 'user dtype override must survive the merge');
       } finally {
         await configAPI.resetConfig().catch(() => {});
@@ -2758,6 +2851,18 @@ async function runAllTests() {
     await unloadAll();
     console.log('\n🤖 Real-model integration suite: loading the actual small models');
     console.log('   (first run downloads weights into .cache/transformers; later runs are cached)');
+
+    // Fully-dynamic config ships with no assigned models — assign the small,
+    // cache-friendly set this suite exercises so it stays deterministic and
+    // does not pull multi-GB weights (recommendations are covered hermetically).
+    const realMs = state.config.modelSettings;
+    realMs.embedder = 'Xenova/all-MiniLM-L6-v2';
+    realMs.classifier = 'Xenova/mobilebert-uncased-mnli';
+    realMs.generator = 'Xenova/LaMini-Flan-T5-248M';
+    for (const [key, model] of Object.entries({ encoder: 'Xenova/all-MiniLM-L6-v2', intent: 'Xenova/mobilebert-uncased-mnli', tagger: 'Xenova/bert-base-NER', dialog: 'Xenova/LaMini-Flan-T5-248M' })) {
+      const st = (realMs.pipeline?.stages || []).find(s => s.key === key);
+      if (st) st.model = model;
+    }
 
     await runTest('ModelsReal', 'preloadModels warms all 4 configured stages from cache/network', async () => {
       const summary = await preloadModels({ loud: false });

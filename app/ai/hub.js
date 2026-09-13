@@ -76,3 +76,58 @@ export async function getHubModelInfo(id, { signal } = {}) {
     sizeMb: sizeBytes ? Math.round((sizeBytes / 1048576) * 10) / 10 : undefined,
   };
 }
+
+const ROLES = ['embedder', 'classifier', 'ner', 'generator'];
+
+/**
+ * Seed the catalog from the Hub: the top transformers.js models for each of
+ * the four roles, deduped by repo id. Returns catalog-shaped entries
+ * ({ id, type, name, sizeMb, downloads, custom, source:'hub' }) ready to be
+ * persisted as modelSettings.availableModels. Browser-only — returns [] in
+ * Node. Every role fetch is independent so one failure doesn't kill the rest;
+ * throws only when every role produced nothing.
+ */
+export async function bootstrapCatalog({ limit = 5, signal } = {}) {
+  if (!isBrowser) return [];
+  const perRole = Math.min(Math.max(limit || 5, 1), 15);
+  const byId = new Map();
+  const errors = [];
+  await Promise.all(ROLES.map(async (role) => {
+    try {
+      const rows = await discoverModels(role, { limit: perRole, signal });
+      for (const r of rows) {
+        if (byId.has(r.id)) {
+          const existing = byId.get(r.id);
+          if (r.type === 'generator' && existing.type !== 'generator') byId.set(r.id, r);
+          continue;
+        }
+        byId.set(r.id, r);
+      }
+    } catch (err) {
+      errors.push(err);
+    }
+  }));
+  if (byId.size === 0 && errors.length === ROLES.length) {
+    throw new Error('Hugging Face is unreachable — no models could be fetched. Check the network and try again.');
+  }
+  const out = [];
+  for (const r of byId.values()) {
+    let sizeMb;
+    try {
+      const info = await getHubModelInfo(r.id, { signal });
+      if (!info || !info.hasOnnx) continue;
+      sizeMb = info.sizeMb;
+    } catch { sizeMb = undefined; }
+    out.push({
+      id: r.id,
+      type: r.type,
+      name: r.name,
+      description: `Discovered from Hugging Face · ${Number(r.downloads || 0).toLocaleString()} downloads`,
+      sizeMb,
+      downloads: Number(r.downloads) || 0,
+      custom: true,
+      source: 'hub',
+    });
+  }
+  return out;
+}

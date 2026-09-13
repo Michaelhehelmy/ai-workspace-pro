@@ -16,7 +16,14 @@
     "ui": {
       "defaultAvatar": "",
       "defaultColor": "#4f46e5",
-      "chartColors": ["#4f46e5", "#06b6d4", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6"],
+      "chartColors": [
+        "#4f46e5",
+        "#06b6d4",
+        "#10b981",
+        "#f59e0b",
+        "#ef4444",
+        "#8b5cf6"
+      ],
       "sidebar": {
         "defaultWidth": 280,
         "minWidth": 200,
@@ -49,24 +56,110 @@
     }
   },
   "quickPrompts": [
-    { "label": "💸 Record Lunch", "query": "Spent $16.50 on lunch at cafe", "emotion": "money" },
-    { "label": "📊 Financial Analysis", "query": "Analyze expenses", "emotion": "money" },
-    { "label": "📌 Add Task", "query": "Add todo review marketing roadmap", "emotion": "task" },
-    { "label": "📋 Task List", "query": "List todos", "emotion": "task" },
-    { "label": "🔍 Semantic Search", "query": "Search marketing projects", "emotion": "neutral" },
-    { "label": "🛠️ List Tools", "query": "List tools", "emotion": "neutral" },
-    { "label": "⚙️ Get Config", "query": "Get config app.theme.mode", "emotion": "neutral" },
-    { "label": "🤖 AI Capabilities", "query": "What can you do now?", "emotion": "happy" },
-    { "label": "👥 List Agents", "query": "List agents", "emotion": "neutral" },
-    { "label": "💬 Ask Marcus", "query": "Ask Marcus about financial analysis", "emotion": "neutral" },
-    { "label": "🔀 Route to Specialist", "query": "Route to specialist budget planning", "emotion": "happy" }
+    {
+      "label": "💸 Record Lunch",
+      "query": "Spent $16.50 on lunch at cafe",
+      "emotion": "money"
+    },
+    {
+      "label": "📊 Financial Analysis",
+      "query": "Analyze expenses",
+      "emotion": "money"
+    },
+    {
+      "label": "📌 Add Task",
+      "query": "Add todo review marketing roadmap",
+      "emotion": "task"
+    },
+    {
+      "label": "📋 Task List",
+      "query": "List todos",
+      "emotion": "task"
+    },
+    {
+      "label": "🔍 Semantic Search",
+      "query": "Search marketing projects",
+      "emotion": "neutral"
+    },
+    {
+      "label": "🛠️ List Tools",
+      "query": "List tools",
+      "emotion": "neutral"
+    },
+    {
+      "label": "⚙️ Get Config",
+      "query": "Get config app.theme.mode",
+      "emotion": "neutral"
+    },
+    {
+      "label": "🤖 AI Capabilities",
+      "query": "What can you do now?",
+      "emotion": "happy"
+    },
+    {
+      "label": "👥 List Agents",
+      "query": "List agents",
+      "emotion": "neutral"
+    },
+    {
+      "label": "💬 Ask Marcus",
+      "query": "Ask Marcus about financial analysis",
+      "emotion": "neutral"
+    },
+    {
+      "label": "🔀 Route to Specialist",
+      "query": "Route to specialist budget planning",
+      "emotion": "happy"
+    }
   ],
   "categories": {
-    "food": ["coffee", "lunch", "dinner", "groceries", "restaurant", "burger", "cafe", "pizza", "snack"],
-    "transport": ["uber", "gas", "metro", "flight", "parking", "taxi", "train", "transit"],
-    "utilities": ["electric", "water", "internet", "bill", "phone", "rent", "power"],
-    "entertainment": ["movie", "game", "netflix", "steam", "concert", "books", "spotify"],
-    "health": ["doctor", "medicine", "gym", "pharmacy", "dentist", "fitness"]
+    "food": [
+      "coffee",
+      "lunch",
+      "dinner",
+      "groceries",
+      "restaurant",
+      "burger",
+      "cafe",
+      "pizza",
+      "snack"
+    ],
+    "transport": [
+      "uber",
+      "gas",
+      "metro",
+      "flight",
+      "parking",
+      "taxi",
+      "train",
+      "transit"
+    ],
+    "utilities": [
+      "electric",
+      "water",
+      "internet",
+      "bill",
+      "phone",
+      "rent",
+      "power"
+    ],
+    "entertainment": [
+      "movie",
+      "game",
+      "netflix",
+      "steam",
+      "concert",
+      "books",
+      "spotify"
+    ],
+    "health": [
+      "doctor",
+      "medicine",
+      "gym",
+      "pharmacy",
+      "dentist",
+      "fitness"
+    ]
   },
   "characters": [
     {
@@ -75,7 +168,12 @@
       "persona": "Proactive executive assistant and task strategist.",
       "systemPrompt": "You are Aria, an intelligent and proactive executive assistant. You manage expenses, tasks, calendars, and domain-specific records. Respond concisely with direct answers. You are aware of other agents and can delegate tasks to specialists when needed.",
       "color": "#4f46e5",
-      "specialization": ["tasks", "calendar", "general", "coordination"],
+      "specialization": [
+        "tasks",
+        "calendar",
+        "general",
+        "coordination"
+      ],
       "emotions": {
         "neutral": "🤖",
         "thinking": "🤔",
@@ -95,7 +193,12 @@
       "persona": "Analytical financial strategist and accountant.",
       "systemPrompt": "You are Marcus, a sharp financial advisor. You specialize in expense tracking, cashflow optimization, budgeting, and financial analysis. You are aware of other agents and can provide financial expertise when requested.",
       "color": "#059669",
-      "specialization": ["finance", "expenses", "budgeting", "analytics"],
+      "specialization": [
+        "finance",
+        "expenses",
+        "budgeting",
+        "analytics"
+      ],
       "emotions": {
         "neutral": "📈",
         "thinking": "🧐",
@@ -123,7 +226,10 @@
             "description": "string",
             "date": "string"
           },
-          "vectorize": ["description", "category"]
+          "vectorize": [
+            "description",
+            "category"
+          ]
         },
         "todos": {
           "fields": {
@@ -132,7 +238,9 @@
             "priority": "string",
             "status": "string"
           },
-          "vectorize": ["task"]
+          "vectorize": [
+            "task"
+          ]
         },
         "calendar_events": {
           "fields": {
@@ -141,7 +249,10 @@
             "end": "string",
             "description": "string"
           },
-          "vectorize": ["summary", "description"]
+          "vectorize": [
+            "summary",
+            "description"
+          ]
         }
       }
     },
@@ -157,7 +268,10 @@
             "description": "string",
             "date": "string"
           },
-          "vectorize": ["description", "category"]
+          "vectorize": [
+            "description",
+            "category"
+          ]
         },
         "projects": {
           "fields": {
@@ -166,301 +280,206 @@
             "budget": "number",
             "status": "string"
           },
-          "vectorize": ["title", "lead"]
+          "vectorize": [
+            "title",
+            "lead"
+          ]
         }
       }
     }
   ],
   "tools": [
-    { "name": "add_transaction", "type": "add_transaction", "description": "Record an income or expense transaction", "icon": "bi-cash-coin" },
-    { "name": "analyze_expenses", "type": "analyze_expenses", "description": "Generate charts and analyze spending by category", "icon": "bi-pie-chart" },
-    { "name": "add_todo", "type": "add_todo", "description": "Add a task to the todo list", "icon": "bi-check2-square" },
-    { "name": "list_todos", "type": "list_todos", "description": "List current pending or completed todos", "icon": "bi-list-task" },
-    { "name": "add_event", "type": "add_event", "description": "Schedule a calendar event or meeting", "icon": "bi-calendar-plus" },
-    { "name": "check_calendar", "type": "check_calendar", "description": "Check upcoming appointments and schedule", "icon": "bi-calendar-week" },
-    { "name": "create_schema", "type": "create_schema", "description": "Dynamically create a new data schema with typed fields", "icon": "bi-diagram-3" },
-    { "name": "search", "type": "rag_query", "description": "Instant semantic search across all indexed data records", "icon": "bi-search" },
-    { "name": "update_config", "type": "config", "description": "Update a configuration value by path (AI-accessible)", "icon": "bi-gear" },
-    { "name": "get_config", "type": "config", "description": "Get a configuration value by path (AI-accessible)", "icon": "bi-info-circle" },
-    { "name": "add_character", "type": "config", "description": "Add a new character/persona to the system (AI-accessible)", "icon": "bi-person-plus" },
-    { "name": "add_business", "type": "config", "description": "Add a new business/workspace to the system (AI-accessible)", "icon": "bi-building-add" },
-    { "name": "create_tool", "type": "system", "description": "Create and register a new tool dynamically (AI-accessible)", "icon": "bi-tools" },
-    { "name": "rollback_config", "type": "config", "description": "Rollback configuration to a previous state (AI-accessible)", "icon": "bi-arrow-counterclockwise" },
-    { "name": "list_tools", "type": "system", "description": "List all available tools with their schemas (AI-accessible)", "icon": "bi-list-check" },
-    { "name": "execute_chain", "type": "system", "description": "Execute a chain of tools in sequence (AI-accessible)", "icon": "bi-link" },
-    { "name": "delegate_to_agent", "type": "agent", "description": "Delegate a task to another specialized agent (AI-accessible)", "icon": "bi-person-workspace" },
-    { "name": "ask_agent", "type": "agent", "description": "Ask a specific agent a question for collaboration (AI-accessible)", "icon": "bi-chat-quote" },
-    { "name": "list_agents", "type": "agent", "description": "List all available agents and their specializations (AI-accessible)", "icon": "bi-people" },
-    { "name": "route_to_specialist", "type": "agent", "description": "Automatically route query to the best specialist agent (AI-accessible)", "icon": "bi-signpost-split" },
-    { "name": "web_search", "type": "web", "description": "Search the internet for information (AI-accessible)", "icon": "bi-globe" },
-    { "name": "google_calendar_list", "type": "google", "description": "List Google Calendar events (AI-accessible)", "icon": "bi-calendar-event" },
-    { "name": "google_drive_list", "type": "google", "description": "List Google Drive files (AI-accessible)", "icon": "bi-google" },
-    { "name": "google_sheets_read", "type": "google", "description": "Read Google Sheets data (AI-accessible)", "icon": "bi-table" },
-    { "name": "change_character_name", "type": "config", "description": "Change the current character's name (AI-accessible)", "icon": "bi-person-badge" }
+    {
+      "name": "add_transaction",
+      "type": "add_transaction",
+      "description": "Record an income or expense transaction",
+      "icon": "bi-cash-coin"
+    },
+    {
+      "name": "analyze_expenses",
+      "type": "analyze_expenses",
+      "description": "Generate charts and analyze spending by category",
+      "icon": "bi-pie-chart"
+    },
+    {
+      "name": "add_todo",
+      "type": "add_todo",
+      "description": "Add a task to the todo list",
+      "icon": "bi-check2-square"
+    },
+    {
+      "name": "list_todos",
+      "type": "list_todos",
+      "description": "List current pending or completed todos",
+      "icon": "bi-list-task"
+    },
+    {
+      "name": "add_event",
+      "type": "add_event",
+      "description": "Schedule a calendar event or meeting",
+      "icon": "bi-calendar-plus"
+    },
+    {
+      "name": "check_calendar",
+      "type": "check_calendar",
+      "description": "Check upcoming appointments and schedule",
+      "icon": "bi-calendar-week"
+    },
+    {
+      "name": "create_schema",
+      "type": "create_schema",
+      "description": "Dynamically create a new data schema with typed fields",
+      "icon": "bi-diagram-3"
+    },
+    {
+      "name": "search",
+      "type": "rag_query",
+      "description": "Instant semantic search across all indexed data records",
+      "icon": "bi-search"
+    },
+    {
+      "name": "update_config",
+      "type": "config",
+      "description": "Update a configuration value by path (AI-accessible)",
+      "icon": "bi-gear"
+    },
+    {
+      "name": "get_config",
+      "type": "config",
+      "description": "Get a configuration value by path (AI-accessible)",
+      "icon": "bi-info-circle"
+    },
+    {
+      "name": "add_character",
+      "type": "config",
+      "description": "Add a new character/persona to the system (AI-accessible)",
+      "icon": "bi-person-plus"
+    },
+    {
+      "name": "add_business",
+      "type": "config",
+      "description": "Add a new business/workspace to the system (AI-accessible)",
+      "icon": "bi-building-add"
+    },
+    {
+      "name": "create_tool",
+      "type": "system",
+      "description": "Create and register a new tool dynamically (AI-accessible)",
+      "icon": "bi-tools"
+    },
+    {
+      "name": "rollback_config",
+      "type": "config",
+      "description": "Rollback configuration to a previous state (AI-accessible)",
+      "icon": "bi-arrow-counterclockwise"
+    },
+    {
+      "name": "list_tools",
+      "type": "system",
+      "description": "List all available tools with their schemas (AI-accessible)",
+      "icon": "bi-list-check"
+    },
+    {
+      "name": "execute_chain",
+      "type": "system",
+      "description": "Execute a chain of tools in sequence (AI-accessible)",
+      "icon": "bi-link"
+    },
+    {
+      "name": "delegate_to_agent",
+      "type": "agent",
+      "description": "Delegate a task to another specialized agent (AI-accessible)",
+      "icon": "bi-person-workspace"
+    },
+    {
+      "name": "ask_agent",
+      "type": "agent",
+      "description": "Ask a specific agent a question for collaboration (AI-accessible)",
+      "icon": "bi-chat-quote"
+    },
+    {
+      "name": "list_agents",
+      "type": "agent",
+      "description": "List all available agents and their specializations (AI-accessible)",
+      "icon": "bi-people"
+    },
+    {
+      "name": "route_to_specialist",
+      "type": "agent",
+      "description": "Automatically route query to the best specialist agent (AI-accessible)",
+      "icon": "bi-signpost-split"
+    },
+    {
+      "name": "web_search",
+      "type": "web",
+      "description": "Search the internet for information (AI-accessible)",
+      "icon": "bi-globe"
+    },
+    {
+      "name": "google_calendar_list",
+      "type": "google",
+      "description": "List Google Calendar events (AI-accessible)",
+      "icon": "bi-calendar-event"
+    },
+    {
+      "name": "google_drive_list",
+      "type": "google",
+      "description": "List Google Drive files (AI-accessible)",
+      "icon": "bi-google"
+    },
+    {
+      "name": "google_sheets_read",
+      "type": "google",
+      "description": "Read Google Sheets data (AI-accessible)",
+      "icon": "bi-table"
+    },
+    {
+      "name": "change_character_name",
+      "type": "config",
+      "description": "Change the current character's name (AI-accessible)",
+      "icon": "bi-person-badge"
+    }
   ],
   "modelSettings": {
     "dtype": "q8",
     "preloadOnOpen": false,
-    "embedder": "Xenova/all-MiniLM-L6-v2",
-    "classifier": "Xenova/mobilebert-uncased-mnli",
-    "generator": "Xenova/LaMini-Flan-T5-77M",
+    "embedder": null,
+    "classifier": null,
+    "generator": null,
     "pipeline": {
       "policy": "swap",
       "threshold": 0.35,
-      "memory": { "maxSimultaneous": 1, "wasmInitialMb": 64 },
+      "memory": {
+        "maxSimultaneous": 1,
+        "wasmInitialMb": 64
+      },
       "stages": [
-        { "key": "encoder", "task": "feature-extraction", "role": "embedder", "model": "Xenova/all-MiniLM-L6-v2" },
-        { "key": "intent", "task": "zero-shot-classification", "role": "classifier", "model": "Xenova/mobilebert-uncased-mnli" },
-        { "key": "tagger", "task": "token-classification", "role": "ner", "model": "Xenova/bert-base-NER" },
-        { "key": "dialog", "task": "text2text-generation", "role": "generator", "model": "Xenova/LaMini-Flan-T5-248M" }
+        {
+          "key": "encoder",
+          "task": "feature-extraction",
+          "role": "embedder",
+          "model": null
+        },
+        {
+          "key": "intent",
+          "task": "zero-shot-classification",
+          "role": "classifier",
+          "model": null
+        },
+        {
+          "key": "tagger",
+          "task": "token-classification",
+          "role": "ner",
+          "model": null
+        },
+        {
+          "key": "dialog",
+          "task": "text2text-generation",
+          "role": "generator",
+          "model": null
+        }
       ]
     },
-    "availableModels": [
-      {
-        "id": "Xenova/all-MiniLM-L6-v2",
-        "name": "MiniLM-L6-v2",
-        "type": "embedder",
-        "description": "Fast, compact semantic embeddings (384-dim)",
-        "sizeMb": 22
-      },
-      {
-        "id": "Xenova/all-MiniLM-L12-v2",
-        "name": "MiniLM-L12-v2",
-        "type": "embedder",
-        "description": "Better quality L12 embeddings, slightly larger",
-        "sizeMb": 32
-      },
-      {
-        "id": "Xenova/bge-small-en-v1.5",
-        "name": "BGE-Small-EN-v1.5",
-        "type": "embedder",
-        "description": "High-retrieval English embeddings (384-dim)",
-        "sizeMb": 30
-      },
-      {
-        "id": "Xenova/bge-base-en-v1.5",
-        "name": "BGE-Base-EN-v1.5",
-        "type": "embedder",
-        "description": "High-quality English embeddings (768-dim)",
-        "sizeMb": 90
-      },
-      {
-        "id": "Xenova/gte-small",
-        "name": "GTE-Small",
-        "type": "embedder",
-        "description": "General-text embeddings, strong on short text",
-        "sizeMb": 32
-      },
-      {
-        "id": "Xenova/multilingual-e5-small",
-        "name": "Multilingual-E5-Small",
-        "type": "embedder",
-        "description": "Multilingual semantic embeddings (100+ languages)",
-        "sizeMb": 113
-      },
-      {
-        "id": "Xenova/gte-base",
-        "name": "GTE-Base",
-        "type": "embedder",
-        "description": "High-quality general-text embeddings (768-dim)",
-        "sizeMb": 220
-      },
-      {
-        "id": "Xenova/multilingual-e5-base",
-        "name": "Multilingual-E5-Base",
-        "type": "embedder",
-        "description": "Multilingual semantic embeddings with higher accuracy (768-dim)",
-        "sizeMb": 278
-      },
-      {
-        "id": "Xenova/gte-large",
-        "name": "GTE-Large",
-        "type": "embedder",
-        "description": "Large general-text embeddings — best quality short text (1024-dim)",
-        "sizeMb": 650
-      },
-      {
-        "id": "Xenova/bge-large-en-v1.5",
-        "name": "BGE-Large-English",
-        "type": "embedder",
-        "description": "High-retrieval English embedding, top accuracy (1024-dim)",
-        "sizeMb": 1310
-      },
-      {
-        "id": "Xenova/mobilebert-uncased-mnli",
-        "name": "MobileBERT Uncased MNLI",
-        "type": "classifier",
-        "description": "Compact zero-shot text classification",
-        "sizeMb": 26
-      },
-      {
-        "id": "Xenova/distilbert-base-uncased-mnli",
-        "name": "DistilBERT Uncased MNLI",
-        "type": "classifier",
-        "description": "Distilled zero-shot classifier, higher accuracy",
-        "sizeMb": 64
-      },
-      {
-        "id": "Xenova/bart-large-mnli",
-        "name": "BART-Large MNLI",
-        "type": "classifier",
-        "description": "Highest-accuracy zero-shot classifier (slow)",
-        "sizeMb": 392
-      },
-      {
-        "id": "Xenova/bert-base-NER",
-        "name": "BERT Base NER",
-        "type": "ner",
-        "description": "Named entity recognition for entity/parameter extraction",
-        "sizeMb": 104
-      },
-      {
-        "id": "Xenova/LaMini-Flan-T5-77M",
-        "name": "LaMini-Flan-T5-77M",
-        "type": "generator",
-        "description": "Fastest instruction-following model (77M params)",
-        "sizeMb": 60
-      },
-      {
-        "id": "Xenova/LaMini-Flan-T5-248M",
-        "name": "LaMini-Flan-T5-248M",
-        "type": "generator",
-        "description": "Balanced instruction-following (248M params)",
-        "sizeMb": 262
-      },
-      {
-        "id": "Xenova/LaMini-Flan-T5-783M",
-        "name": "LaMini-Flan-T5-783M",
-        "type": "generator",
-        "description": "High-quality instruction-following (783M params)",
-        "sizeMb": 620
-      },
-      {
-        "id": "Xenova/flan-t5-small",
-        "name": "Flan-T5-Small",
-        "type": "generator",
-        "description": "Google's instruction-tuned model (80M params)",
-        "sizeMb": 90
-      },
-      {
-        "id": "Xenova/flan-t5-base",
-        "name": "Flan-T5-Base",
-        "type": "generator",
-        "description": "Google's instruction-tuned model (250M params)",
-        "sizeMb": 262
-      },
-      {
-        "id": "Xenova/TinyLlama-1.1B-Chat-v1.0",
-        "name": "TinyLlama 1.1B Chat",
-        "type": "generator",
-        "description": "Compact 1.1B-param Llama-family chat model — good quality for the size",
-        "sizeMb": 1150
-          },
-          {
-            "id": "Xenova/llama-3.2-1B-Instruct",
-            "name": "Llama 3.2 1B Instruct",
-            "type": "generator",
-            "description": "Meta's 1B instruct chat model, fast on CPU",
-            "sizeMb": 1000
-          },
-          {
-            "id": "Xenova/llama-3.2-3B-Instruct",
-            "name": "Llama 3.2 3B Instruct",
-            "type": "generator",
-            "description": "Meta's 3B instruct chat model — strong quality, needs ~3GB+ of RAM",
-            "sizeMb": 3200
-          },
-          {
-            "id": "onnx-community/Qwen2.5-1.5B-Instruct",
-            "name": "Qwen2.5 1.5B Instruct",
-            "type": "generator",
-            "description": "Alibaba's 1.5B chat model, strong quality for the size",
-            "sizeMb": 1600
-          },
-          {
-            "id": "Xenova/Qwen1.5-1.8B-Chat",
-            "name": "Qwen1.5 1.8B Chat",
-            "type": "generator",
-            "description": "Alibaba's 1.8B chat model, multilingual and strong",
-            "sizeMb": 1800
-          },
-          {
-            "id": "onnx-community/EXAONE-3.5-2.4B-Instruct",
-            "name": "EXAONE 3.5 2.4B Instruct",
-            "type": "generator",
-            "description": "LG's 2.4B instruct chat model — premium compact quality",
-            "sizeMb": 2500
-          },
-          {
-            "id": "Xenova/Phi-3-mini-4k-instruct",
-            "name": "Phi-3 Mini Instruct",
-            "type": "generator",
-            "description": "Microsoft's 3.8B chat model, surprisingly capable",
-            "sizeMb": 3800
-          },
-          {
-            "id": "Xenova/Qwen1.5-0.5B-Chat",
-            "name": "Qwen1.5 0.5B Chat",
-            "type": "generator",
-            "description": "Fast 0.5B Alibaba chat model for low-memory devices",
-            "sizeMb": 540
-          },
-          {
-            "id": "onnx-community/Llama-3.2-1B-Instruct-ONNX",
-            "name": "Llama 3.2 1B Instruct (ONNX)",
-            "type": "generator",
-            "description": "ONNX build of Meta's 1B instruct chat model",
-            "sizeMb": 1300
-          },
-          {
-            "id": "onnx-community/SmolLM2-360M-Instruct-ONNX",
-            "name": "SmolLM2 360M Instruct",
-            "type": "generator",
-            "description": "Hugging Face's 360M instruct chat model, very light",
-            "sizeMb": 390
-          },
-          {
-            "id": "onnx-community/SmolLM2-135M-Instruct-ONNX",
-            "name": "SmolLM2 135M Instruct",
-            "type": "generator",
-            "description": "Tiny 135M instruct chat model for minimal-memory devices",
-            "sizeMb": 145
-          },
-          {
-            "id": "Xenova/llama-160m",
-            "name": "Llama 160M",
-            "type": "generator",
-            "description": "Minimal 160M Llama-fanily checkpoint for constrained devices",
-            "sizeMb": 170
-          },
-          {
-            "id": "Xenova/llama2.c-stories110M",
-            "name": "Llama2.c Stories 110M",
-            "type": "generator",
-            "description": "110M story-telling Llama2.c checkpoint for constrained devices",
-            "sizeMb": 120
-          },
-          {
-            "id": "onnx-community/Qwen2.5-Coder-1.5B-Instruct",
-            "name": "Qwen2.5 Coder 1.5B Instruct",
-            "type": "generator",
-            "description": "Qwen2.5 Coder 1.5B instruct, strong for code tasks",
-            "sizeMb": 1600
-          },
-          {
-            "id": "onnx-community/Falcon3-1B-Instruct",
-            "name": "Falcon3 1B Instruct",
-            "type": "generator",
-            "description": "TII Falcon3 1B instruct chat model",
-            "sizeMb": 1070
-          },
-          {
-            "id": "Xenova/bloomz-560m",
-            "name": "BLOOMZ 560M",
-            "type": "generator",
-            "description": "BigScience multilingual instruction-tuned model (stable official build)",
-            "sizeMb": 590
-          }
-    ]
+    "availableModels": []
   }
 }

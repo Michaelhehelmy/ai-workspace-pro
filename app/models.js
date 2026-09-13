@@ -178,15 +178,17 @@ export function getDeviceRecommendations(profileOrProbes, opts = {}) {
     const rec = recs[key] || {};
     const meta = getModelMeta(rec.model);
     const fallbackId = stageOpt.model;
-    const pick = meta ? rec.model : (rec.model && getModelMeta(rec.model) ? rec.model : fallbackId);
-    const pickMeta = getModelMeta(pick);
+    const pick = meta ? rec.model : fallbackId;
+    const pickMeta = pick ? getModelMeta(pick) : null;
     stages.push(Object.freeze({
       key,
       stage: stageOpt.label,
-      recommended: pick,
-      name: pickMeta ? pickMeta.name : pick,
+      recommended: pick || null,
+      name: pickMeta ? pickMeta.name : (pick || 'No model configured'),
       sizeMb: pickMeta ? pickMeta.sizeMb : null,
-      reason: meta && meta.id === pick ? rec.reason : (pickMeta ? `Falling back to ${pickMeta.name} (catalog lookup)` : 'No catalog match — keeping current model'),
+      reason: pick
+        ? (meta && meta.id === pick ? rec.reason : (pickMeta ? `Falling back to ${pickMeta.name} (catalog lookup)` : `Keeping current model (${pick})`))
+        : (rec.reason || 'No model available for this stage — Browse Hugging Face to add one.'),
       current: stageOpt.model,
       loaded: stageOpt.loaded
     }));
@@ -219,7 +221,9 @@ export function buildRecommendedModelSettings(profileOrProbes) {
   for (const stageDef of Object.values(PIPELINE_STAGES)) {
     const rec = (plan.stages || {})[stageDef.key] || {};
     const meta = getModelMeta(rec.model);
-    const model = meta ? rec.model : ((stageMap.get(stageDef.key) || {}).model || stageDef.default);
+    // A recommended model wins when it exists in the catalog; otherwise keep
+    // whatever the stage is currently set to (which may be null).
+    const model = meta ? rec.model : ((stageMap.get(stageDef.key) || {}).model || null);
     if (stageMap.has(stageDef.key)) {
       const idx = stages.findIndex(s => s && s.key === stageDef.key);
       stages[idx] = { ...stages[idx], model };
@@ -269,7 +273,7 @@ export function applyStageModel(stageKey, modelId) {
     throw new ModelError('E_NO_CONFIG', stageDef.key, 'Configuration not loaded — cannot assign a model.', 'Call init() / loadConfiguration() first.');
   }
   const ms = state.config.modelSettings;
-  if (!ms.pipeline || !Array.isArray(ms.pipeline.stages)) ms.pipeline = { policy: 'swap', threshold: 0.35, memory: { maxSimultaneous: 1, wasmInitialMb: 64 }, stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: s.default })) };
+  if (!ms.pipeline || !Array.isArray(ms.pipeline.stages)) ms.pipeline = { policy: 'swap', threshold: 0.35, memory: { maxSimultaneous: 1, wasmInitialMb: 64 }, stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: null })) };
   const stageCfg = ms.pipeline.stages.find(s => s && s.key === stageDef.key);
   if (stageCfg) stageCfg.model = id;
   else ms.pipeline.stages.push({ key: stageDef.key, task: stageDef.task, role: stageDef.role, model: id });
@@ -293,6 +297,10 @@ export async function getModel(typeOrName, modelName, modelRole) {
   const config = state.config;
   if (!config || !config.modelSettings) {
     throw new ModelError('E_NO_CONFIG', null, 'Configuration not loaded — cannot resolve models.', 'Call init() / loadConfiguration() first.');
+  }
+  const mStatus = getPipelineStatus();
+  if (mStatus && mStatus.disabled) {
+    throw new ModelError('E_DISABLED', null, 'On-device models are disabled.', 'Allow model inference to use the full on-device pipeline.');
   }
   if (typeof typeOrName !== 'string' || !typeOrName.trim()) {
     throw new ModelError('E_UNKNOWN_STAGE', null, 'getModel requires a model id or stage key.', 'Pass a Hugging Face model id (e.g. "Xenova/all-MiniLM-L6-v2") or a stage key (encoder/intent/tagger/dialog).');
@@ -320,6 +328,14 @@ export async function getModel(typeOrName, modelName, modelRole) {
   }
 
   if (!stageKey || !mid) {
+    if (stageKey && !mid) {
+      throw new ModelError(
+        'E_LOAD_MODEL',
+        stageKey,
+        `No model is assigned to the "${stageKey}" stage yet.`,
+        'Apply Recommendations, pick a model in the Models tab, or Browse Hugging Face to add one.'
+      );
+    }
     throw new ModelError('E_UNKNOWN_STAGE', null, `No pipeline stage resolves for "${typeOrName}".`, 'Use a known HF model id, a stage key, or an entry listed in modelSettings.availableModels.');
   }
 
@@ -327,9 +343,9 @@ export async function getModel(typeOrName, modelName, modelRole) {
 }
 
 /**
- * Default modelSettings (used by "Reset to defaults"). Keeps the current
- * availableModels catalog so newly-added models survive a reset, and rebuilds
- * the small stage list from the stage registry defaults.
+ * Default modelSettings (used by "Reset to defaults"). No model ids are
+ * hardcoded here: stages start unassigned and the current availableModels
+ * catalog is preserved so dynamically-added models survive a reset.
  */
 export function defaultModelSettings() {
   const ms = state.config && state.config.modelSettings;
@@ -337,14 +353,14 @@ export function defaultModelSettings() {
   return {
     dtype: 'q8',
     preloadOnOpen: !!ms.preloadOnOpen,
-    embedder: PIPELINE_STAGES.encoder.default,
-    classifier: PIPELINE_STAGES.intent.default,
-    generator: PIPELINE_STAGES.dialog.default,
+    embedder: null,
+    classifier: null,
+    generator: null,
     pipeline: {
       policy: 'swap',
       threshold: 0.35,
       memory: { maxSimultaneous: 1, wasmInitialMb: 64 },
-      stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: s.default }))
+      stages: Object.values(PIPELINE_STAGES).map(s => ({ key: s.key, task: s.task, role: s.role, model: null }))
     },
     availableModels: catalog
   };
@@ -364,7 +380,9 @@ export async function computeEmbedding(schemaName, data, stateInstance = state) 
     const text = fields.map(f => data[f]).filter(Boolean).join(' ');
     if (!text) return null;
     const ms = stateInstance.config && stateInstance.config.modelSettings;
-    const embedder = await getModel((ms && ms.embedder) || PIPELINE_STAGES.encoder.default);
+    const embedderId = (ms && ms.embedder) || null;
+    if (!embedderId) return null;
+    const embedder = await getModel(embedderId);
     const out = await embedder(text, { pooling: 'mean', normalize: true });
     return Array.from(out.data);
   } catch (e) {
@@ -391,7 +409,9 @@ export async function embedText(text, modelOverride) {
   // On-device Transformers.js fallback
   try {
     const ms = state.config && state.config.modelSettings;
-    const embedder = await getModel(modelOverride || (ms && ms.embedder) || PIPELINE_STAGES.encoder.default);
+    const embedderId = modelOverride || (ms && ms.embedder) || null;
+    if (!embedderId) return null;
+    const embedder = await getModel(embedderId);
     const out = await embedder(String(text), { pooling: 'mean', normalize: true });
     return Array.from(out.data);
   } catch (err) {

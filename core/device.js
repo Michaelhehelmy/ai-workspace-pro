@@ -11,44 +11,14 @@ const TIER_ORDER = [DEVICE_TIERS.LOW, DEVICE_TIERS.MID, DEVICE_TIERS.HIGH, DEVIC
 /** Approximate size multiplier vs listed q8 size (listed = q8 baseline) */
 const DTYPE_MEM_FACTOR = Object.freeze({ q8: 1.0, int8: 0.55, uint8: 0.55, fp16: 1.6, fp32: 3.2 });
 
-/** Memory budget per tier for fit verdict thresholds (MB) */
+/**
+ * Memory budget per tier for fit verdict thresholds (MB)
+ */
 const TIER_BUDGET_MB = Object.freeze({
   low:  { ideal: 200, heavy: 400 },
   mid:  { ideal: 350, heavy: 700 },
   high: { ideal: 1000, heavy: 2400 },
   ultra:{ ideal: 3500, heavy: 8000 },
-});
-
-/** Default catalog recommendation table keyed by tier + pipeline stage */
-const RECOMMENDATION_TABLE = Object.freeze({
-  low: {
-    encoder: 'Xenova/all-MiniLM-L6-v2',
-    intent:  'Xenova/mobilebert-uncased-mnli',
-    tagger:  'Xenova/bert-base-NER',
-    dialog:  'Xenova/LaMini-Flan-T5-248M',
-    dtype:   'q8',
-  },
-  mid: {
-    encoder: 'Xenova/bge-small-en-v1.5',
-    intent:  'Xenova/mobilebert-uncased-mnli',
-    tagger:  'Xenova/bert-base-NER',
-    dialog:  'Xenova/LaMini-Flan-T5-248M',
-    dtype:   'q8',
-  },
-  high: {
-    encoder: 'Xenova/bge-base-en-v1.5',
-    intent:  'Xenova/distilbert-base-uncased-mnli',
-    tagger:  'Xenova/bert-base-NER',
-    dialog:  'Xenova/TinyLlama-1.1B-Chat-v1.0',
-    dtype:   'q8',
-  },
-  ultra: {
-    encoder: 'Xenova/bge-large-en-v1.5',
-    intent:  'Xenova/bart-large-mnli',
-    tagger:  'Xenova/bert-base-NER',
-    dialog:  'Xenova/llama-3.2-3B-Instruct',
-    dtype:   'q8',
-  },
 });
 
 /**
@@ -294,35 +264,105 @@ export function getModelFit(profile, meta) {
   return Object.freeze({ score, verdict, reason });
 }
 
-/** Recommend model set for a device profile. Returns { tier, dtype, stages, notes } */
+/**
+ * Stage key → candidate matching. A catalog entry belongs to a stage when its
+ * `type` is the stage role (embedder/classifier/ner/generator) or one of the
+ * stage's own key/task aliases.
+ */
+const STAGE_ROLE = Object.freeze({
+  encoder: { role: 'embedder', alias: ['encoder', 'feature-extraction'] },
+  intent:  { role: 'classifier', alias: ['intent', 'zero-shot-classification'] },
+  tagger:  { role: 'ner', alias: ['tagger', 'token-classification'] },
+  dialog:  { role: 'generator', alias: ['dialog', 'text2text-generation'] },
+});
+
+/**
+ * Downloads-based popularity bonus (0-12). Log-scaled so it acts purely as a
+ * tiebreaker between models that fit equally well, never dominating fit.
+ */
+function popularityScore(downloads) {
+  const d = Number(downloads) || 0;
+  if (d <= 1000) return 0;
+  const p = Math.log10(d) * 3 - 12; // ~0 at 10k, ~6 at 1M, ~12 at 100M
+  return Math.max(0, Math.min(12, p));
+}
+
+function matchesStage(m, stage) {
+  if (!m || typeof m.type !== 'string') return false;
+  return m.type === stage.role || stage.alias.includes(m.type);
+}
+
+// pickBestFit is called with a *role* (embedder/classifier/ner/generator), not a
+// stage key — resolve the stage entry that owns that role.
+function stageForRole(role) {
+  return STAGE_ROLE[role] || Object.values(STAGE_ROLE).find(s => s.role === role) || null;
+}
+
+/**
+ * Rank the best-fit catalog model for a stage on this device. Score = memory
+ * fit (0-100 from getModelFit, or a neutral 50 when the size is unknown) plus
+ * the popularity tiebreaker. No model ids are hardcoded — the runtime catalog
+ * is the only source of candidates, so recommendations adapt to whatever the
+ * user has discovered/added.
+ */
+export function pickBestFit(profile, role, catalog) {
+  const list = Array.isArray(catalog) ? catalog : [];
+  const stage = stageForRole(role);
+  if (!profile || !stage) return null;
+  let best = null;
+  let bestTotal = -Infinity;
+  for (const m of list) {
+    if (!m || typeof m.id !== 'string' || !m.id) continue;
+    if (!matchesStage(m, stage)) continue;
+    const fitScore = Number.isFinite(Number(m.sizeMb)) && Number(m.sizeMb) > 0
+      ? getModelFit(profile, m).score
+      : 50;
+    const total = fitScore + popularityScore(m.downloads);
+    if (total > bestTotal) { best = m; bestTotal = total; }
+  }
+  return best;
+}
+
+/**
+ * Recommend model set for a device profile over the *current* catalog.
+ * Returns { tier, dtype, stages, notes }. Dynamic: each stage is matched to
+ * the best-fit catalog entry for that device, with popular models winning
+ * ties. A stage falls back to { model: null } when the catalog has no entry
+ * for its role — nothing is injected from a fixed table.
+ */
 export function recommendModelSet(profile, catalog) {
-  if (!profile) return { tier: DEVICE_TIERS.MID, dtype: 'q8', stages: {}, notes: 'No profile; using mid defaults' };
+  const list = Array.isArray(catalog) ? catalog : [];
+  if (!profile) {
+    return Object.freeze({ tier: DEVICE_TIERS.MID, dtype: 'q8', stages: {}, notes: 'No profile — add models to the catalog and recommend again' });
+  }
   const tier = profile.tier || DEVICE_TIERS.MID;
-  const table = RECOMMENDATION_TABLE[tier] || RECOMMENDATION_TABLE.mid;
-  const catMap = Array.isArray(catalog) ? catalog.reduce((m, e) => { m[e.id] = e; return m; }, {}) : {};
   const stages = {};
 
-  for (const key of ['encoder', 'intent', 'tagger', 'dialog']) {
-    const modelId = table[key];
-    const meta = catMap[modelId] || null;
-    stages[key] = Object.freeze({
-      model: modelId,
-      name: meta ? meta.name : modelId,
-      sizeMb: meta ? meta.sizeMb : null,
-      reason: meta
-        ? `${meta.name} (${meta.sizeMb} MB) — best for ${tier}-tier devices`
-        : `${modelId} — default for ${tier}`,
-    });
+  for (const [key, stage] of Object.entries(STAGE_ROLE)) {
+    const m = pickBestFit(profile, stage.role, list);
+    stages[key] = Object.freeze(m
+      ? {
+          model: m.id,
+          name: m.name || m.id,
+          sizeMb: Number.isFinite(Number(m.sizeMb)) ? Number(m.sizeMb) : null,
+          reason: `${m.name || m.id} (${Number.isFinite(Number(m.sizeMb)) ? `${m.sizeMb} MB` : 'size unknown'}) — best fit for ${tier}-tier${m.downloads ? ` · ${Number(m.downloads).toLocaleString()} downloads` : ''}`,
+        }
+      : {
+          model: null,
+          name: 'No model configured',
+          sizeMb: null,
+          reason: `No ${stage.role} model in the catalog — Browse Hugging Face to add one.`,
+        });
   }
 
   return Object.freeze({
     tier,
-    dtype: table.dtype,
+    dtype: 'q8',
     stages: Object.freeze(stages),
     memory: Object.freeze({
-      wasmThreads: profile.tier === DEVICE_TIERS.ULTRA ? 16 : profile.tier === DEVICE_TIERS.HIGH ? 8 : profile.tier === DEVICE_TIERS.MID ? 4 : 2
+      wasmThreads: tier === DEVICE_TIERS.ULTRA ? 16 : tier === DEVICE_TIERS.HIGH ? 8 : tier === DEVICE_TIERS.MID ? 4 : 2
     }),
-    notes: `Recommended for ${tier}-tier (${profile.cores} cores${profile.memoryMb ? ', ' + (profile.memoryMb / 1024).toFixed(0) + ' GB' : ''}${profile.gpuKind !== 'none' ? ', ' + profile.gpuKind : ''})`,
+    notes: `Recommended for ${tier}-tier (${profile.cores} cores${profile.memoryMb ? ', ' + (profile.memoryMb / 1024).toFixed(0) + ' GB' : ''}${profile.gpuKind !== 'none' ? ', ' + profile.gpuKind : ''}) — dynamic selection from ${list.length} catalog models`,
   });
 }
 

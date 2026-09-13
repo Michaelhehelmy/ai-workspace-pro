@@ -291,7 +291,8 @@ async function hubModelCached(modelId) {
 
 async function ensureModelReachable(stageKey, modelId) {
   if (!isBrowser) return;
-  if (!/^[A-Za-z0-9._/-]+$/.test(String(modelId))) return;
+  if (!modelId || typeof modelId !== 'string') return;
+  if (!/^[A-Za-z0-9._/-]+$/.test(modelId)) return;
   if (!_hubCheck.has('ok:' + modelId) && await hubModelCached(modelId)) {
     _hubCheck.set('ok:' + modelId, true);
     return;
@@ -339,6 +340,14 @@ async function ensureModelReachable(stageKey, modelId) {
 }
 
 async function buildPipeline(stageDef, modelId) {
+  if (modelsDisabled()) {
+    throw new ModelError(
+      'E_DISABLED',
+      stageDef ? stageDef.key : null,
+      'On-device models are disabled in this environment.',
+      'Unset MODELS_DISABLED (or window.__MODELS_DISABLED__) to enable real model inference.'
+    );
+  }
   const status = pipelineStatus();
   status.status = 'loading';
   status.stage = stageDef.key;
@@ -484,7 +493,7 @@ export function getModelIdForStage(stageDef) {
     if (stageDef.key === 'intent' && ms.classifier) return ms.classifier;
     if (stageDef.key === 'dialog' && ms.generator) return ms.generator;
   }
-  return stageDef ? stageDef.default : null;
+  return null;
 }
 
 /**
@@ -567,7 +576,8 @@ export async function health() {
 export async function embed(text, modelOverride) {
   if (!text) return null;
   const ms = (state.config && state.config.modelSettings) || {};
-  const modelId = modelOverride || ms.embedder || PIPELINE_STAGES.encoder.default;
+  const modelId = modelOverride || ms.embedder || null;
+  if (!modelId) return null;
   const out = await inferStage('encoder', async (pipe) => {
     if (typeof pipe !== 'function') return null;
     const res = await pipe(String(text), { pooling: 'mean', normalize: true });

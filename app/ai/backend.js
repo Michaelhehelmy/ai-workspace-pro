@@ -52,11 +52,17 @@ export function formatModelError(err) {
 }
 
 // ── Capability stages the app expects from model providers ───────────────────
+/**
+ * Shared pipeline-stage registry. Stages carry no hardcoded model — which
+ * model each stage uses is decided at runtime (device-fit recommendation over
+ * the current catalog, or an explicit user pick). `resolveStage` maps any
+ * key/role/task back to a stage.
+ */
 export const PIPELINE_STAGES = {
-  encoder: { key: 'encoder', task: 'feature-extraction',        role: 'embedder',   default: 'Xenova/all-MiniLM-L6-v2',          mb: 90 },
-  intent:  { key: 'intent',  task: 'zero-shot-classification',  role: 'classifier', default: 'Xenova/mobilebert-uncased-mnli',   mb: 110 },
-  tagger:  { key: 'tagger',  task: 'token-classification',      role: 'ner',        default: 'Xenova/bert-base-NER',             mb: 180 },
-  dialog:  { key: 'dialog',  task: 'text2text-generation',      role: 'generator',  default: 'Xenova/LaMini-Flan-T5-248M',        mb: 260 }
+  encoder: { key: 'encoder', task: 'feature-extraction',       role: 'embedder'   },
+  intent:  { key: 'intent',  task: 'zero-shot-classification', role: 'classifier' },
+  tagger:  { key: 'tagger',  task: 'token-classification',     role: 'ner'        },
+  dialog:  { key: 'dialog',  task: 'text2text-generation',     role: 'generator'  }
 };
 
 export const ROLE_TO_STAGE = { embedder: 'encoder', classifier: 'intent', ner: 'tagger', generator: 'dialog' };
