@@ -28,7 +28,7 @@ function isText2Text(m) {
 // headers, so direct browser fetches can be blocked) and fall back to a direct
 // Hub fetch on bare static hosting where no Worker is present.
 let workerProbe = null;
-function hasWorkerHubProxy() {
+export function hasWorkerHubProxy() {
   if (!isBrowser) return Promise.resolve(false);
   if (!workerProbe) {
     workerProbe = fetch('/api/health', { cache: 'no-store' })
@@ -80,7 +80,7 @@ export async function discoverModels(type, { limit = 25, signal } = {}) {
 export async function getHubModelInfo(id, { signal } = {}) {
   if (!isBrowser) return null;
   const base = (await hasWorkerHubProxy())
-    ? '/api/hub/info?path=' + encodeURIComponent(String(id))
+    ? '/api/hub/info?path=' + encodeURIComponent(String(id)) + '&blobs=true'
     : 'https://huggingface.co/api/models/' + String(id) + '?blobs=true';
   const res = await fetch(base, {
     signal,

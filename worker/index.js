@@ -99,7 +99,16 @@ export default {
       if (!REPO_PATH_RE.test(modelPath)) {
         return json({ ok: false, error: 'Invalid "path" parameter' }, 400);
       }
-      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}?blobs=true`, 300);
+      // Forward only the two query shapes the app uses — blobs=true (catalog
+      // sizing) and expand[]=siblings (reachability probe) — so the proxy stays
+      // a fixed-target pass-through, never an open relay.
+      const forward = new URLSearchParams();
+      if (url.searchParams.get('blobs') !== null) forward.set('blobs', 'true');
+      for (const expand of url.searchParams.getAll('expand[]')) {
+        if (/^[A-Za-z0-9_-]+$/.test(expand)) forward.append('expand[]', expand);
+      }
+      const query = forward.toString();
+      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}${query ? '?' + query : ''}`, 300);
     }
 
     if (pathname.startsWith('/api/')) {

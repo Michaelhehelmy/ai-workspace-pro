@@ -1350,13 +1350,50 @@ async function runAllTests() {
     };
     try {
       const response = await worker.fetch(
-        new Request('https://ai-workspace-pro.example.com/api/hub/info?path=Xenova/all-MiniLM-L6-v2', { method: 'GET' }),
+        new Request('https://ai-workspace-pro.example.com/api/hub/info?path=Xenova/all-MiniLM-L6-v2&blobs=true', { method: 'GET' }),
         {}
       );
       assertEquals(response.status, 200);
       assertEquals(response.headers.get('access-control-allow-origin'), '*');
       const body = await response.json();
       assertEquals(body.id, 'Xenova/all-MiniLM-L6-v2');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/info forwards expand[]=siblings for reachability probes', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      assert(String(url).startsWith('https://huggingface.co/api/models/justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT?expand%5B%5D=siblings'), 'upstream must forward expand[]=siblings');
+      return new Response(JSON.stringify({ id: 'justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT', gated: false, siblings: [] }), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/info?path=justinthelaw%2FQwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT&expand%5B%5D=siblings', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.json();
+      assertEquals(body.id, 'justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/info drops unsupported query params from the forward', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => { seen = String(url); return new Response('{}', { status: 200 }); };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/info?path=Xenova/all-MiniLM-L6-v2&evil=1&blobs=true', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assert(seen.startsWith('https://huggingface.co/api/models/Xenova/all-MiniLM-L6-v2?blobs=true'), `blobs forwarded but evil dropped, got: ${seen}`);
+      assert(!seen.includes('evil'), 'unsupported params must never reach the upstream');
     } finally {
       globalThis.fetch = origFetch;
     }

@@ -24,6 +24,7 @@
  */
 
 import { isBrowser } from '../../core/env.js';
+import { hasWorkerHubProxy } from './hub.js';
 import { state } from '../../core/state.js';
 import {
   ModelError,
@@ -303,7 +304,15 @@ async function ensureModelReachable(stageKey, modelId) {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 15000);
     try {
-      const res = await fetch('https://huggingface.co/api/models/' + modelId + '?expand[]=siblings', {
+      // Route through the same-origin worker proxy when it is present (the Hub
+      // API omits CORS headers on 404s, so a direct fetch of a missing model
+      // surfaces as "Cross-Origin Request Blocked"); fall back to a direct Hub
+      // fetch on bare static hosting.
+      const proxied = await hasWorkerHubProxy();
+      const base = proxied
+        ? '/api/hub/info?path=' + encodeURIComponent(modelId) + '&expand[]=siblings'
+        : 'https://huggingface.co/api/models/' + modelId + '?expand[]=siblings';
+      const res = await fetch(base, {
         headers: { accept: 'application/json' },
         signal: ctrl.signal
       });
