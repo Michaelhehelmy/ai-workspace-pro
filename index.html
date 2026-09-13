@@ -411,6 +411,39 @@
           </div>
         </div>
 
+        <!-- Browse Hugging Face -->
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-cloud-download"></i> Browse Hugging Face</small>
+            <span class="small text-body-secondary" id="hubStatus"></span>
+          </div>
+          <div class="card-body p-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold" for="hubTypeSelect">Type</label>
+                <select class="form-select form-select-sm" id="hubTypeSelect">
+                  <option value="embedder">Embedder</option>
+                  <option value="classifier">Classifier</option>
+                  <option value="ner">NER</option>
+                  <option value="generator">Generator</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold" for="hubSearchInput">Search (optional)</label>
+                <input type="text" class="form-control form-control-sm" id="hubSearchInput" placeholder="e.g., bge, nomic, t5… (blank = most downloaded)">
+              </div>
+              <div class="col-md-2">
+                <button class="btn btn-sm btn-primary w-100" id="hubSearchBtn" type="button"><i class="bi bi-search"></i> Search</button>
+              </div>
+              <div class="col-md-2">
+                <button class="btn btn-sm btn-outline-secondary w-100" id="hubClearBtn" type="button"><i class="bi bi-x"></i> Clear</button>
+              </div>
+            </div>
+            <div class="small text-body-secondary mt-2 mb-2">Shows transformers.js-ready models (ONNX) from Hugging Face. Add one to the catalog, then pick it in a stage below.</div>
+            <div id="hubResults" class="vh-25" style="max-height:280px;overflow:auto"></div>
+          </div>
+        </div>
+
         <!-- Device & Recommendations -->
         <div class="card border mb-3">
           <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center">

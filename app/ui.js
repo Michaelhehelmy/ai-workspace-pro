@@ -904,22 +904,119 @@ export function initModelsTab() {
       const sizeMb = parseInt(document.getElementById('customModelSizeInput')?.value) || undefined;
       if (!id) { showToast('Model ID is required.', 'error'); return; }
       try {
+        let onnx = false;
+        let finalSize = sizeMb;
+        if (!sizeMb && id.includes('/')) {
+          try {
+            const HUB = await import('./ai/hub.js');
+            const info = await HUB.getHubModelInfo(id);
+            if (info) { onnx = info.hasOnnx; finalSize = info.sizeMb || undefined; }
+          } catch (_) {}
+        }
         const ms = state.config?.modelSettings || {};
         const avail = Array.isArray(ms.availableModels) ? [...ms.availableModels] : [];
         if (avail.some(m => m.id === id)) { showToast('Model already exists in catalog.', 'error'); return; }
-        avail.push({ id, type: type || 'embedder', description, sizeMb, custom: true });
+        avail.push({ id, type: type || 'embedder', description, sizeMb: finalSize, custom: true, source: 'custom' });
         await configAPI.updateConfig('modelSettings.availableModels', avail);
         document.getElementById('customModelIdInput').value = '';
         document.getElementById('customModelDescInput').value = '';
         document.getElementById('customModelSizeInput').value = '';
         renderConfigEditor();
+        await populateModelSelects();
         await renderModelsPanel();
-        showToast(`Model "${id}" added to catalog.`, 'success');
+        showToast(onnx ? `Model "${id}" added to catalog.` : `Model "${id}" added — couldn't confirm ONNX weights on Hugging Face; it will be validated on load.`, onnx ? 'success' : 'warning');
       } catch (err) {
         showToast(err && err.message ? err.message : String(err), 'error');
       }
     });
   }
+
+  wireHubDiscovery();
+}
+
+// ── Browse Hugging Face (runtime model discovery) ──────────────────────────
+function wireHubDiscovery() {
+  if (!isBrowser) return;
+  const searchBtn = document.getElementById('hubSearchBtn');
+  const clearBtn = document.getElementById('hubClearBtn');
+  const typeSel = document.getElementById('hubTypeSelect');
+  const searchInput = document.getElementById('hubSearchInput');
+  const results = document.getElementById('hubResults');
+  const statusEl = document.getElementById('hubStatus');
+  if (!searchBtn || !typeSel || !results) return;
+
+  const setBusy = (t) => { if (statusEl) statusEl.textContent = t || ''; };
+
+  async function runSearch() {
+    const type = typeSel.value || 'embedder';
+    const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    try {
+      setBusy('searching…');
+      const HUB = await import('./ai/hub.js');
+      let list = await HUB.discoverModels(type, { limit: 25 });
+      if (q) list = list.filter(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
+      if (!list.length) {
+        results.innerHTML = '<div class="small text-body-secondary py-2">No transformers.js models found for this type. Try a different type or leave the search empty.</div>';
+        setBusy('');
+        return;
+      }
+      results.innerHTML = list.map(m => `
+        <div class="d-flex justify-content-between align-items-center small py-1 border-bottom">
+          <div class="me-2 text-truncate">
+            <span class="fw-semibold">${escapeHtml(m.id)}</span>
+            <span class="text-body-secondary"> · ${Number(m.downloads || 0).toLocaleString()} downloads</span>
+          </div>
+          <button class="btn btn-sm btn-outline-primary py-0 flex-shrink-0" type="button" data-hub-add="${escapeHtml(m.id)}" data-hub-type="${escapeHtml(m.type)}" data-hub-dl="${Number(m.downloads || 0)}">Add</button>
+        </div>`).join('');
+      results.querySelectorAll('[data-hub-add]').forEach(btn => {
+        btn.addEventListener('click', () => addHubModel(
+          btn.getAttribute('data-hub-add'),
+          btn.getAttribute('data-hub-type'),
+          Number(btn.getAttribute('data-hub-dl') || 0)
+        ));
+      });
+      setBusy(String(list.length) + ' models');
+    } catch (err) {
+      results.innerHTML = `<div class="small text-danger py-2">${escapeHtml(err && err.message ? err.message : String(err))}</div>`;
+      setBusy('error');
+    }
+  }
+
+  async function addHubModel(id, type, downloads) {
+    const btn = results.querySelector(`[data-hub-add="${CSS.escape(id)}"]`);
+    if (btn) { btn.disabled = true; btn.textContent = '…'; }
+    try {
+      const HUB = await import('./ai/hub.js');
+      const info = await HUB.getHubModelInfo(id);
+      if (!info || !info.hasOnnx) throw new Error('This model does not ship ONNX weights, so it cannot run in the browser.');
+      const ms = state.config?.modelSettings || {};
+      const avail = Array.isArray(ms.availableModels) ? [...ms.availableModels] : [];
+      if (avail.some(m => m.id === id)) throw new Error('Model already exists in catalog.');
+      avail.push({
+        id,
+        type: type || 'embedder',
+        description: `Added from Hugging Face · ${Number(downloads || 0).toLocaleString()} downloads`,
+        sizeMb: info.sizeMb,
+        custom: true,
+        source: 'hub'
+      });
+      await configAPI.updateConfig('modelSettings.availableModels', avail);
+      renderConfigEditor();
+      await populateModelSelects();
+      await renderModelsPanel();
+      showToast(`Model "${id}" added to catalog.`, 'success');
+      runSearch();
+    } catch (err) {
+      showToast(err && err.message ? err.message : String(err), 'error');
+      if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+    }
+  }
+
+  if (clearBtn && searchInput) {
+    clearBtn.addEventListener('click', () => { searchInput.value = ''; results.innerHTML = ''; setBusy(''); });
+  }
+  if (searchInput) searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+  searchBtn.addEventListener('click', runSearch);
 }
 
 // ── Backend URL & memory settings sync helpers ────────────────────────────────

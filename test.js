@@ -2821,6 +2821,27 @@ async function runAllTests() {
   // Restore hermetic env so any post-suite path stays deterministic.
   if (isNode) process.env.MODELS_DISABLED = '1';
 
+  // ── Hub discovery (browser only, live Hugging Face) ──────────────────
+  if (isBrowser) {
+    await runTest('Hub', 'discoverModels lists transformers.js embedders from Hugging Face', async () => {
+      const HUB = await import('./app/ai/hub.js');
+      const list = await HUB.discoverModels('embedder', { limit: 5 });
+      assert(Array.isArray(list) && list.length > 0, `expected at least one embedder, got ${String(list && list.length)}`);
+      const m = list[0];
+      assert(typeof m.id === 'string' && m.id.includes('/'), `model id should be org/name, got: ${m && m.id}`);
+      assert(typeof m.downloads === 'number' && m.downloads >= 0, `downloads should be a number, got: ${m && m.downloads}`);
+      assert(typeof m.type === 'string', 'entries should carry the requested type');
+    });
+
+    await runTest('Hub', 'getHubModelInfo reports ONNX weights and size', async () => {
+      const HUB = await import('./app/ai/hub.js');
+      const info = await HUB.getHubModelInfo('Xenova/all-MiniLM-L6-v2');
+      assert(info && info.hasOnnx === true, `expected ONNX weights present for all-MiniLM-L6-v2`);
+      assert(typeof info.sizeMb === 'number' && info.sizeMb > 0, `expected a size in MB, got: ${info && info.sizeMb}`);
+      assert(info.gated === false, 'a known public repo should not be gated');
+    });
+  }
+
   // forcePreload is deferred to here: it caches the module-private preload
   // promise, so calling it during the hermetic suites would poison ModelsReal's
   // `preloadModels({ loud: false })` above (which expects disabled:false).
