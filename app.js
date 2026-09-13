@@ -6,7 +6,7 @@
 import { isBrowser } from './core/env.js';
 import { state, getActiveCharacter, getActiveBusiness } from './core/state.js';
 import { workspaceDB as db, WorkspaceDB, cosineSimilarity } from './core/db.js';
-import { configAPI, ConfigAPI, validateConfig, CONFIG_SCHEMA, collectConfigIssues, isPlaceholder, applyRuntimeOverrides } from './core/config.js';
+import { configAPI, ConfigAPI, validateConfig, CONFIG_SCHEMA, CONFIG_SCHEMA_VERSION, migrateLegacyModelCatalog, collectConfigIssues, isPlaceholder, applyRuntimeOverrides } from './core/config.js';
 import { toolRegistry, ToolRegistry, ToolChain, createSandboxedTool } from './core/tools.js';
 import { Extension, ExtensionRegistry, extensionRegistry, BUILTIN_EXTENSIONS, applyBuiltinExtensions, permissionMeta } from './core/extensions.js';
 import { filterRecords, escapeHtml } from './core/utils.js';
@@ -39,6 +39,8 @@ export {
   ConfigAPI,
   validateConfig,
   CONFIG_SCHEMA,
+  CONFIG_SCHEMA_VERSION,
+  migrateLegacyModelCatalog,
   collectConfigIssues,
   isPlaceholder,
   applyRuntimeOverrides,

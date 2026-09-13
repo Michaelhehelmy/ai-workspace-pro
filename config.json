@@ -1,485 +1,486 @@
 {
-  "app": {
-    "name": "AI Workspace Pro",
-    "subtitle": "Autonomous On-Device Agent",
-    "version": "2.1.1",
-    "defaultCharacter": "aria",
-    "defaultBusiness": "personal",
-    "theme": {
-      "mode": "light",
-      "primary": "#4f46e5"
-    },
-    "voice": {
-      "autoSpeak": false,
-      "lang": "en-US"
-    },
-    "ui": {
-      "defaultAvatar": "",
-      "defaultColor": "#4f46e5",
-      "chartColors": [
-        "#4f46e5",
-        "#06b6d4",
-        "#10b981",
-        "#f59e0b",
-        "#ef4444",
-        "#8b5cf6"
-      ],
-      "sidebar": {
-        "defaultWidth": 280,
-        "minWidth": 200,
-        "maxWidth": 500
-      }
-    },
-    "google": {
-      "clientId": "",
-      "scopes": [
-        "https://www.googleapis.com/auth/calendar.readonly",
-        "https://www.googleapis.com/auth/drive.readonly",
-        "https://www.googleapis.com/auth/spreadsheets.readonly"
-      ]
-    },
-    "ai": {
-      "backends": {
-        "llamacpp": {
-          "url": "http://localhost:8080/v1",
-          "enabled": false
-        },
-        "ollama": {
-          "url": "http://localhost:11434",
-          "enabled": false
-        }
-      },
-      "routing": {
-        "dialog": "auto",
-        "embedder": "auto"
-      }
-    }
+ "app": {
+  "name": "AI Workspace Pro",
+  "subtitle": "Autonomous On-Device Agent",
+  "version": "2.1.1",
+  "defaultCharacter": "aria",
+  "defaultBusiness": "personal",
+  "theme": {
+   "mode": "light",
+   "primary": "#4f46e5"
   },
-  "quickPrompts": [
-    {
-      "label": "💸 Record Lunch",
-      "query": "Spent $16.50 on lunch at cafe",
-      "emotion": "money"
-    },
-    {
-      "label": "📊 Financial Analysis",
-      "query": "Analyze expenses",
-      "emotion": "money"
-    },
-    {
-      "label": "📌 Add Task",
-      "query": "Add todo review marketing roadmap",
-      "emotion": "task"
-    },
-    {
-      "label": "📋 Task List",
-      "query": "List todos",
-      "emotion": "task"
-    },
-    {
-      "label": "🔍 Semantic Search",
-      "query": "Search marketing projects",
-      "emotion": "neutral"
-    },
-    {
-      "label": "🛠️ List Tools",
-      "query": "List tools",
-      "emotion": "neutral"
-    },
-    {
-      "label": "⚙️ Get Config",
-      "query": "Get config app.theme.mode",
-      "emotion": "neutral"
-    },
-    {
-      "label": "🤖 AI Capabilities",
-      "query": "What can you do now?",
-      "emotion": "happy"
-    },
-    {
-      "label": "👥 List Agents",
-      "query": "List agents",
-      "emotion": "neutral"
-    },
-    {
-      "label": "💬 Ask Marcus",
-      "query": "Ask Marcus about financial analysis",
-      "emotion": "neutral"
-    },
-    {
-      "label": "🔀 Route to Specialist",
-      "query": "Route to specialist budget planning",
-      "emotion": "happy"
-    }
-  ],
-  "categories": {
-    "food": [
-      "coffee",
-      "lunch",
-      "dinner",
-      "groceries",
-      "restaurant",
-      "burger",
-      "cafe",
-      "pizza",
-      "snack"
-    ],
-    "transport": [
-      "uber",
-      "gas",
-      "metro",
-      "flight",
-      "parking",
-      "taxi",
-      "train",
-      "transit"
-    ],
-    "utilities": [
-      "electric",
-      "water",
-      "internet",
-      "bill",
-      "phone",
-      "rent",
-      "power"
-    ],
-    "entertainment": [
-      "movie",
-      "game",
-      "netflix",
-      "steam",
-      "concert",
-      "books",
-      "spotify"
-    ],
-    "health": [
-      "doctor",
-      "medicine",
-      "gym",
-      "pharmacy",
-      "dentist",
-      "fitness"
-    ]
+  "voice": {
+   "autoSpeak": false,
+   "lang": "en-US"
   },
-  "characters": [
-    {
-      "id": "aria",
-      "name": "Aria",
-      "persona": "Proactive executive assistant and task strategist.",
-      "systemPrompt": "You are Aria, an intelligent and proactive executive assistant. You manage expenses, tasks, calendars, and domain-specific records. Respond concisely with direct answers. You are aware of other agents and can delegate tasks to specialists when needed.",
-      "color": "#4f46e5",
-      "specialization": [
-        "tasks",
-        "calendar",
-        "general",
-        "coordination"
-      ],
-      "emotions": {
-        "neutral": "🤖",
-        "thinking": "🤔",
-        "happy": "😊",
-        "money": "💰",
-        "task": "📋",
-        "event": "📅",
-        "error": "⚠️",
-        "search": "🔍"
-      },
-      "voicePitch": 1.0,
-      "voiceRate": 1.05
+  "ui": {
+   "defaultAvatar": "",
+   "defaultColor": "#4f46e5",
+   "chartColors": [
+    "#4f46e5",
+    "#06b6d4",
+    "#10b981",
+    "#f59e0b",
+    "#ef4444",
+    "#8b5cf6"
+   ],
+   "sidebar": {
+    "defaultWidth": 280,
+    "minWidth": 200,
+    "maxWidth": 500
+   }
+  },
+  "google": {
+   "clientId": "",
+   "scopes": [
+    "https://www.googleapis.com/auth/calendar.readonly",
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/spreadsheets.readonly"
+   ]
+  },
+  "ai": {
+   "backends": {
+    "llamacpp": {
+     "url": "http://localhost:8080/v1",
+     "enabled": false
     },
-    {
-      "id": "marcus",
-      "name": "Marcus",
-      "persona": "Analytical financial strategist and accountant.",
-      "systemPrompt": "You are Marcus, a sharp financial advisor. You specialize in expense tracking, cashflow optimization, budgeting, and financial analysis. You are aware of other agents and can provide financial expertise when requested.",
-      "color": "#059669",
-      "specialization": [
-        "finance",
-        "expenses",
-        "budgeting",
-        "analytics"
-      ],
-      "emotions": {
-        "neutral": "📈",
-        "thinking": "🧐",
-        "happy": "💵",
-        "money": "💳",
-        "task": "📝",
-        "event": "⏱️",
-        "error": "🚨",
-        "search": "📊"
-      },
-      "voicePitch": 0.9,
-      "voiceRate": 1.0
+    "ollama": {
+     "url": "http://localhost:11434",
+     "enabled": false
     }
-  ],
-  "businesses": [
-    {
-      "id": "personal",
-      "name": "Personal Life",
-      "schemas": {
-        "transactions": {
-          "fields": {
-            "type": "string",
-            "amount": "number",
-            "category": "string",
-            "description": "string",
-            "date": "string"
-          },
-          "vectorize": [
-            "description",
-            "category"
-          ]
-        },
-        "todos": {
-          "fields": {
-            "task": "string",
-            "due_date": "string",
-            "priority": "string",
-            "status": "string"
-          },
-          "vectorize": [
-            "task"
-          ]
-        },
-        "calendar_events": {
-          "fields": {
-            "summary": "string",
-            "start": "string",
-            "end": "string",
-            "description": "string"
-          },
-          "vectorize": [
-            "summary",
-            "description"
-          ]
-        }
-      }
-    },
-    {
-      "id": "ventures",
-      "name": "Global Ventures",
-      "schemas": {
-        "transactions": {
-          "fields": {
-            "type": "string",
-            "amount": "number",
-            "category": "string",
-            "description": "string",
-            "date": "string"
-          },
-          "vectorize": [
-            "description",
-            "category"
-          ]
-        },
-        "projects": {
-          "fields": {
-            "title": "string",
-            "lead": "string",
-            "budget": "number",
-            "status": "string"
-          },
-          "vectorize": [
-            "title",
-            "lead"
-          ]
-        }
-      }
-    }
-  ],
-  "tools": [
-    {
-      "name": "add_transaction",
-      "type": "add_transaction",
-      "description": "Record an income or expense transaction",
-      "icon": "bi-cash-coin"
-    },
-    {
-      "name": "analyze_expenses",
-      "type": "analyze_expenses",
-      "description": "Generate charts and analyze spending by category",
-      "icon": "bi-pie-chart"
-    },
-    {
-      "name": "add_todo",
-      "type": "add_todo",
-      "description": "Add a task to the todo list",
-      "icon": "bi-check2-square"
-    },
-    {
-      "name": "list_todos",
-      "type": "list_todos",
-      "description": "List current pending or completed todos",
-      "icon": "bi-list-task"
-    },
-    {
-      "name": "add_event",
-      "type": "add_event",
-      "description": "Schedule a calendar event or meeting",
-      "icon": "bi-calendar-plus"
-    },
-    {
-      "name": "check_calendar",
-      "type": "check_calendar",
-      "description": "Check upcoming appointments and schedule",
-      "icon": "bi-calendar-week"
-    },
-    {
-      "name": "create_schema",
-      "type": "create_schema",
-      "description": "Dynamically create a new data schema with typed fields",
-      "icon": "bi-diagram-3"
-    },
-    {
-      "name": "search",
-      "type": "rag_query",
-      "description": "Instant semantic search across all indexed data records",
-      "icon": "bi-search"
-    },
-    {
-      "name": "update_config",
-      "type": "config",
-      "description": "Update a configuration value by path (AI-accessible)",
-      "icon": "bi-gear"
-    },
-    {
-      "name": "get_config",
-      "type": "config",
-      "description": "Get a configuration value by path (AI-accessible)",
-      "icon": "bi-info-circle"
-    },
-    {
-      "name": "add_character",
-      "type": "config",
-      "description": "Add a new character/persona to the system (AI-accessible)",
-      "icon": "bi-person-plus"
-    },
-    {
-      "name": "add_business",
-      "type": "config",
-      "description": "Add a new business/workspace to the system (AI-accessible)",
-      "icon": "bi-building-add"
-    },
-    {
-      "name": "create_tool",
-      "type": "system",
-      "description": "Create and register a new tool dynamically (AI-accessible)",
-      "icon": "bi-tools"
-    },
-    {
-      "name": "rollback_config",
-      "type": "config",
-      "description": "Rollback configuration to a previous state (AI-accessible)",
-      "icon": "bi-arrow-counterclockwise"
-    },
-    {
-      "name": "list_tools",
-      "type": "system",
-      "description": "List all available tools with their schemas (AI-accessible)",
-      "icon": "bi-list-check"
-    },
-    {
-      "name": "execute_chain",
-      "type": "system",
-      "description": "Execute a chain of tools in sequence (AI-accessible)",
-      "icon": "bi-link"
-    },
-    {
-      "name": "delegate_to_agent",
-      "type": "agent",
-      "description": "Delegate a task to another specialized agent (AI-accessible)",
-      "icon": "bi-person-workspace"
-    },
-    {
-      "name": "ask_agent",
-      "type": "agent",
-      "description": "Ask a specific agent a question for collaboration (AI-accessible)",
-      "icon": "bi-chat-quote"
-    },
-    {
-      "name": "list_agents",
-      "type": "agent",
-      "description": "List all available agents and their specializations (AI-accessible)",
-      "icon": "bi-people"
-    },
-    {
-      "name": "route_to_specialist",
-      "type": "agent",
-      "description": "Automatically route query to the best specialist agent (AI-accessible)",
-      "icon": "bi-signpost-split"
-    },
-    {
-      "name": "web_search",
-      "type": "web",
-      "description": "Search the internet for information (AI-accessible)",
-      "icon": "bi-globe"
-    },
-    {
-      "name": "google_calendar_list",
-      "type": "google",
-      "description": "List Google Calendar events (AI-accessible)",
-      "icon": "bi-calendar-event"
-    },
-    {
-      "name": "google_drive_list",
-      "type": "google",
-      "description": "List Google Drive files (AI-accessible)",
-      "icon": "bi-google"
-    },
-    {
-      "name": "google_sheets_read",
-      "type": "google",
-      "description": "Read Google Sheets data (AI-accessible)",
-      "icon": "bi-table"
-    },
-    {
-      "name": "change_character_name",
-      "type": "config",
-      "description": "Change the current character's name (AI-accessible)",
-      "icon": "bi-person-badge"
-    }
-  ],
-  "modelSettings": {
-    "dtype": "q8",
-    "preloadOnOpen": false,
-    "embedder": null,
-    "classifier": null,
-    "generator": null,
-    "pipeline": {
-      "policy": "swap",
-      "threshold": 0.35,
-      "memory": {
-        "maxSimultaneous": 1,
-        "wasmInitialMb": 64
-      },
-      "stages": [
-        {
-          "key": "encoder",
-          "task": "feature-extraction",
-          "role": "embedder",
-          "model": null
-        },
-        {
-          "key": "intent",
-          "task": "zero-shot-classification",
-          "role": "classifier",
-          "model": null
-        },
-        {
-          "key": "tagger",
-          "task": "token-classification",
-          "role": "ner",
-          "model": null
-        },
-        {
-          "key": "dialog",
-          "task": "text2text-generation",
-          "role": "generator",
-          "model": null
-        }
-      ]
-    },
-    "availableModels": []
+   },
+   "routing": {
+    "dialog": "auto",
+    "embedder": "auto"
+   }
+  },
+  "schemaVersion": 3
+ },
+ "quickPrompts": [
+  {
+   "label": "\ud83d\udcb8 Record Lunch",
+   "query": "Spent $16.50 on lunch at cafe",
+   "emotion": "money"
+  },
+  {
+   "label": "\ud83d\udcca Financial Analysis",
+   "query": "Analyze expenses",
+   "emotion": "money"
+  },
+  {
+   "label": "\ud83d\udccc Add Task",
+   "query": "Add todo review marketing roadmap",
+   "emotion": "task"
+  },
+  {
+   "label": "\ud83d\udccb Task List",
+   "query": "List todos",
+   "emotion": "task"
+  },
+  {
+   "label": "\ud83d\udd0d Semantic Search",
+   "query": "Search marketing projects",
+   "emotion": "neutral"
+  },
+  {
+   "label": "\ud83d\udee0\ufe0f List Tools",
+   "query": "List tools",
+   "emotion": "neutral"
+  },
+  {
+   "label": "\u2699\ufe0f Get Config",
+   "query": "Get config app.theme.mode",
+   "emotion": "neutral"
+  },
+  {
+   "label": "\ud83e\udd16 AI Capabilities",
+   "query": "What can you do now?",
+   "emotion": "happy"
+  },
+  {
+   "label": "\ud83d\udc65 List Agents",
+   "query": "List agents",
+   "emotion": "neutral"
+  },
+  {
+   "label": "\ud83d\udcac Ask Marcus",
+   "query": "Ask Marcus about financial analysis",
+   "emotion": "neutral"
+  },
+  {
+   "label": "\ud83d\udd00 Route to Specialist",
+   "query": "Route to specialist budget planning",
+   "emotion": "happy"
   }
+ ],
+ "categories": {
+  "food": [
+   "coffee",
+   "lunch",
+   "dinner",
+   "groceries",
+   "restaurant",
+   "burger",
+   "cafe",
+   "pizza",
+   "snack"
+  ],
+  "transport": [
+   "uber",
+   "gas",
+   "metro",
+   "flight",
+   "parking",
+   "taxi",
+   "train",
+   "transit"
+  ],
+  "utilities": [
+   "electric",
+   "water",
+   "internet",
+   "bill",
+   "phone",
+   "rent",
+   "power"
+  ],
+  "entertainment": [
+   "movie",
+   "game",
+   "netflix",
+   "steam",
+   "concert",
+   "books",
+   "spotify"
+  ],
+  "health": [
+   "doctor",
+   "medicine",
+   "gym",
+   "pharmacy",
+   "dentist",
+   "fitness"
+  ]
+ },
+ "characters": [
+  {
+   "id": "aria",
+   "name": "Aria",
+   "persona": "Proactive executive assistant and task strategist.",
+   "systemPrompt": "You are Aria, an intelligent and proactive executive assistant. You manage expenses, tasks, calendars, and domain-specific records. Respond concisely with direct answers. You are aware of other agents and can delegate tasks to specialists when needed.",
+   "color": "#4f46e5",
+   "specialization": [
+    "tasks",
+    "calendar",
+    "general",
+    "coordination"
+   ],
+   "emotions": {
+    "neutral": "\ud83e\udd16",
+    "thinking": "\ud83e\udd14",
+    "happy": "\ud83d\ude0a",
+    "money": "\ud83d\udcb0",
+    "task": "\ud83d\udccb",
+    "event": "\ud83d\udcc5",
+    "error": "\u26a0\ufe0f",
+    "search": "\ud83d\udd0d"
+   },
+   "voicePitch": 1.0,
+   "voiceRate": 1.05
+  },
+  {
+   "id": "marcus",
+   "name": "Marcus",
+   "persona": "Analytical financial strategist and accountant.",
+   "systemPrompt": "You are Marcus, a sharp financial advisor. You specialize in expense tracking, cashflow optimization, budgeting, and financial analysis. You are aware of other agents and can provide financial expertise when requested.",
+   "color": "#059669",
+   "specialization": [
+    "finance",
+    "expenses",
+    "budgeting",
+    "analytics"
+   ],
+   "emotions": {
+    "neutral": "\ud83d\udcc8",
+    "thinking": "\ud83e\uddd0",
+    "happy": "\ud83d\udcb5",
+    "money": "\ud83d\udcb3",
+    "task": "\ud83d\udcdd",
+    "event": "\u23f1\ufe0f",
+    "error": "\ud83d\udea8",
+    "search": "\ud83d\udcca"
+   },
+   "voicePitch": 0.9,
+   "voiceRate": 1.0
+  }
+ ],
+ "businesses": [
+  {
+   "id": "personal",
+   "name": "Personal Life",
+   "schemas": {
+    "transactions": {
+     "fields": {
+      "type": "string",
+      "amount": "number",
+      "category": "string",
+      "description": "string",
+      "date": "string"
+     },
+     "vectorize": [
+      "description",
+      "category"
+     ]
+    },
+    "todos": {
+     "fields": {
+      "task": "string",
+      "due_date": "string",
+      "priority": "string",
+      "status": "string"
+     },
+     "vectorize": [
+      "task"
+     ]
+    },
+    "calendar_events": {
+     "fields": {
+      "summary": "string",
+      "start": "string",
+      "end": "string",
+      "description": "string"
+     },
+     "vectorize": [
+      "summary",
+      "description"
+     ]
+    }
+   }
+  },
+  {
+   "id": "ventures",
+   "name": "Global Ventures",
+   "schemas": {
+    "transactions": {
+     "fields": {
+      "type": "string",
+      "amount": "number",
+      "category": "string",
+      "description": "string",
+      "date": "string"
+     },
+     "vectorize": [
+      "description",
+      "category"
+     ]
+    },
+    "projects": {
+     "fields": {
+      "title": "string",
+      "lead": "string",
+      "budget": "number",
+      "status": "string"
+     },
+     "vectorize": [
+      "title",
+      "lead"
+     ]
+    }
+   }
+  }
+ ],
+ "tools": [
+  {
+   "name": "add_transaction",
+   "type": "add_transaction",
+   "description": "Record an income or expense transaction",
+   "icon": "bi-cash-coin"
+  },
+  {
+   "name": "analyze_expenses",
+   "type": "analyze_expenses",
+   "description": "Generate charts and analyze spending by category",
+   "icon": "bi-pie-chart"
+  },
+  {
+   "name": "add_todo",
+   "type": "add_todo",
+   "description": "Add a task to the todo list",
+   "icon": "bi-check2-square"
+  },
+  {
+   "name": "list_todos",
+   "type": "list_todos",
+   "description": "List current pending or completed todos",
+   "icon": "bi-list-task"
+  },
+  {
+   "name": "add_event",
+   "type": "add_event",
+   "description": "Schedule a calendar event or meeting",
+   "icon": "bi-calendar-plus"
+  },
+  {
+   "name": "check_calendar",
+   "type": "check_calendar",
+   "description": "Check upcoming appointments and schedule",
+   "icon": "bi-calendar-week"
+  },
+  {
+   "name": "create_schema",
+   "type": "create_schema",
+   "description": "Dynamically create a new data schema with typed fields",
+   "icon": "bi-diagram-3"
+  },
+  {
+   "name": "search",
+   "type": "rag_query",
+   "description": "Instant semantic search across all indexed data records",
+   "icon": "bi-search"
+  },
+  {
+   "name": "update_config",
+   "type": "config",
+   "description": "Update a configuration value by path (AI-accessible)",
+   "icon": "bi-gear"
+  },
+  {
+   "name": "get_config",
+   "type": "config",
+   "description": "Get a configuration value by path (AI-accessible)",
+   "icon": "bi-info-circle"
+  },
+  {
+   "name": "add_character",
+   "type": "config",
+   "description": "Add a new character/persona to the system (AI-accessible)",
+   "icon": "bi-person-plus"
+  },
+  {
+   "name": "add_business",
+   "type": "config",
+   "description": "Add a new business/workspace to the system (AI-accessible)",
+   "icon": "bi-building-add"
+  },
+  {
+   "name": "create_tool",
+   "type": "system",
+   "description": "Create and register a new tool dynamically (AI-accessible)",
+   "icon": "bi-tools"
+  },
+  {
+   "name": "rollback_config",
+   "type": "config",
+   "description": "Rollback configuration to a previous state (AI-accessible)",
+   "icon": "bi-arrow-counterclockwise"
+  },
+  {
+   "name": "list_tools",
+   "type": "system",
+   "description": "List all available tools with their schemas (AI-accessible)",
+   "icon": "bi-list-check"
+  },
+  {
+   "name": "execute_chain",
+   "type": "system",
+   "description": "Execute a chain of tools in sequence (AI-accessible)",
+   "icon": "bi-link"
+  },
+  {
+   "name": "delegate_to_agent",
+   "type": "agent",
+   "description": "Delegate a task to another specialized agent (AI-accessible)",
+   "icon": "bi-person-workspace"
+  },
+  {
+   "name": "ask_agent",
+   "type": "agent",
+   "description": "Ask a specific agent a question for collaboration (AI-accessible)",
+   "icon": "bi-chat-quote"
+  },
+  {
+   "name": "list_agents",
+   "type": "agent",
+   "description": "List all available agents and their specializations (AI-accessible)",
+   "icon": "bi-people"
+  },
+  {
+   "name": "route_to_specialist",
+   "type": "agent",
+   "description": "Automatically route query to the best specialist agent (AI-accessible)",
+   "icon": "bi-signpost-split"
+  },
+  {
+   "name": "web_search",
+   "type": "web",
+   "description": "Search the internet for information (AI-accessible)",
+   "icon": "bi-globe"
+  },
+  {
+   "name": "google_calendar_list",
+   "type": "google",
+   "description": "List Google Calendar events (AI-accessible)",
+   "icon": "bi-calendar-event"
+  },
+  {
+   "name": "google_drive_list",
+   "type": "google",
+   "description": "List Google Drive files (AI-accessible)",
+   "icon": "bi-google"
+  },
+  {
+   "name": "google_sheets_read",
+   "type": "google",
+   "description": "Read Google Sheets data (AI-accessible)",
+   "icon": "bi-table"
+  },
+  {
+   "name": "change_character_name",
+   "type": "config",
+   "description": "Change the current character's name (AI-accessible)",
+   "icon": "bi-person-badge"
+  }
+ ],
+ "modelSettings": {
+  "dtype": "q8",
+  "preloadOnOpen": false,
+  "embedder": null,
+  "classifier": null,
+  "generator": null,
+  "pipeline": {
+   "policy": "swap",
+   "threshold": 0.35,
+   "memory": {
+    "maxSimultaneous": 1,
+    "wasmInitialMb": 64
+   },
+   "stages": [
+    {
+     "key": "encoder",
+     "task": "feature-extraction",
+     "role": "embedder",
+     "model": null
+    },
+    {
+     "key": "intent",
+     "task": "zero-shot-classification",
+     "role": "classifier",
+     "model": null
+    },
+    {
+     "key": "tagger",
+     "task": "token-classification",
+     "role": "ner",
+     "model": null
+    },
+    {
+     "key": "dialog",
+     "task": "text2text-generation",
+     "role": "generator",
+     "model": null
+    }
+   ]
+  },
+  "availableModels": []
+ }
 }

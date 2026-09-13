@@ -86,6 +86,8 @@ import {
   probeAllBackends,
   resetHealthCache,
   configAPI,
+  CONFIG_SCHEMA_VERSION,
+  migrateLegacyModelCatalog,
   ExtensionRegistry,
   extensionRegistry,
   applyBuiltinExtensions,
@@ -2776,6 +2778,58 @@ async function runAllTests() {
     try { createSandboxedTool('{{{ not valid javascript', testDb); } catch (e) { threw = e.message; }
     assert(threw && /compilation failed/i.test(threw), `expected compile error, got: ${threw}`);
   });
+
+  {
+    const dynamicDisk = () => ({ app: { schemaVersion: CONFIG_SCHEMA_VERSION }, modelSettings: { availableModels: [] } });
+
+    await runTest('Init', 'migrateLegacyModelCatalog wipes a pre-dynamic persisted catalog to the empty dynamic state', async () => {
+      const saved = {
+        app: { name: 'AWP', version: '2.1.1' },
+        modelSettings: {
+          embedder: 'Xenova/all-MiniLM-L6-v2',
+          classifier: 'Xenova/bart-large-mnli',
+          generator: 'Xenova/flan-t5-base',
+          availableModels: [
+            { id: 'Xenova/all-MiniLM-L6-v2', type: 'embedder', name: 'MiniLM', sizeMb: 90 },
+            { id: 'Xenova/flan-t5-base', type: 'generator', name: 'Flan T5 Base', sizeMb: 400 }
+          ],
+          pipeline: {
+            stages: [
+              { key: 'encoder', task: 'feature-extraction', role: 'embedder', model: 'Xenova/all-MiniLM-L6-v2' },
+              { key: 'dialog', task: 'text2text-generation', role: 'generator', model: 'Xenova/flan-t5-base' }
+            ]
+          }
+        }
+      };
+      const migrated = migrateLegacyModelCatalog(dynamicDisk(), saved);
+      assert(migrated === true, 'legacy config must be flagged as migrated');
+      assert(Array.isArray(saved.modelSettings.availableModels) && saved.modelSettings.availableModels.length === 0, 'legacy hardcoded catalog must be emptied');
+      assert(saved.modelSettings.embedder === null && saved.modelSettings.classifier === null && saved.modelSettings.generator === null, 'hardcoded helper model ids must be cleared');
+      assert(!saved.modelSettings.pipeline.stages.some(s => s.model), 'hardcoded stage model targets must be cleared');
+      assert(saved.app.schemaVersion === CONFIG_SCHEMA_VERSION, 'legacy config must be stamped with the current schema version');
+    });
+
+    await runTest('Init', 'migrateLegacyModelCatalog leaves a current dynamic config untouched', async () => {
+      const saved = {
+        app: { name: 'AWP', version: '2.2.0', schemaVersion: CONFIG_SCHEMA_VERSION },
+        modelSettings: {
+          embedder: null,
+          classifier: null,
+          generator: null,
+          availableModels: [
+            { id: 'BAAI/bge-small-en-v1.5', type: 'embedder', name: 'bge-small', sizeMb: 133, source: 'hub' }
+          ],
+          pipeline: { stages: [
+            { key: 'encoder', task: 'feature-extraction', role: 'embedder', model: 'BAAI/bge-small-en-v1.5' }
+          ] }
+        }
+      };
+      const before = JSON.stringify(saved);
+      const migrated = migrateLegacyModelCatalog(dynamicDisk(), saved);
+      assert(migrated === false, 'current-version config must not be flagged as legacy');
+      assertEquals(JSON.stringify(saved), before, 'currently-persisted dynamic catalog must survive untouched');
+    });
+  }
 
   // ── 9u. init + loadConfiguration wiring (Node only; the browser auto-inits
   //     on app.js import, so re-initializing there would re-wire the UI) ───────

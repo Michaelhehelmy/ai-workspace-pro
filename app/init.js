@@ -5,7 +5,7 @@
 import { isBrowser } from '../core/env.js';
 import { state } from '../core/state.js';
 import { workspaceDB as db } from '../core/db.js';
-import { validateConfig, configAPI, applyRuntimeOverrides, collectConfigIssues } from '../core/config.js';
+import { validateConfig, configAPI, applyRuntimeOverrides, collectConfigIssues, migrateLegacyModelCatalog } from '../core/config.js';
 import { toolRegistry } from '../core/tools.js';
 import { preloadModels } from './models.js';
 import { AgentCommunication } from './agents.js';
@@ -37,6 +37,18 @@ export async function loadConfiguration() {
 
     const saved = await loadSavedConfigSafe();
     if (saved && saved.loaded) {
+      // A persisted config written before the fully-dynamic catalog carries the
+      // old hardcoded model table. Wipe it once (catalog + helper assignments +
+      // stage targets) so the frontend starts genuinely empty and the Models tab
+      // repopulates from live Hugging Face discovery instead. Schema-versioned,
+      // so this runs exactly once per legacy install.
+      if (migrateLegacyModelCatalog(configData, state.config)) {
+        try {
+          await configAPI.persistConfig(state.config);
+        } catch (persistErr) {
+          console.warn('Failed to persist migrated config:', persistErr);
+        }
+      }
       // loadSavedConfig assigns the persisted config to state.config
       configData = mergeConfig(configData || state.config, state.config);
     }

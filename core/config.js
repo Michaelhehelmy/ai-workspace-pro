@@ -6,6 +6,11 @@
 import { workspaceDB } from './db.js';
 import { state } from './state.js';
 
+// Bumped whenever the representation of persisted configuration changes in a
+// way that makes old stored configs incompatible. version 3 = fully dynamic
+// model catalog: no hardcoded model ids, stage targets, or sizes are shipped.
+export const CONFIG_SCHEMA_VERSION = 3;
+
 export const CONFIG_SCHEMA = {
   type: 'object',
   required: ['app', 'quickPrompts', 'categories', 'characters', 'businesses', 'tools', 'modelSettings'],
@@ -17,6 +22,7 @@ export const CONFIG_SCHEMA = {
         name: { type: 'string', minLength: 1 },
         subtitle: { type: 'string' },
         version: { type: 'string' },
+        schemaVersion: { type: 'integer' },
         defaultCharacter: { type: 'string' },
         defaultBusiness: { type: 'string' },
         ai: {
@@ -142,6 +148,33 @@ export function validateConfig(config) {
   if (!Array.isArray(config.modelSettings.availableModels)) {
     config.modelSettings.availableModels = [];
   }
+  return true;
+}
+
+/**
+ * One-time migration for configs persisted before the fully-dynamic catalog
+ * (schemaVersion < current). Those saved configs embedded the old hardcoded
+ * model table — ids, sizes, helper assignments, and default stage targets —
+ * which unionModels would otherwise resurrect into a "still has hardcoded
+ * models" frontend forever. Wipe the whole model subsystem back to the dynamic
+ * empty state (catalog [], helpers null, stage models null) and stamp the
+ * current version so it only ever runs once. Returns true when it migrated.
+ */
+export function migrateLegacyModelCatalog(disk, saved) {
+  const version = Number((disk && disk.app && disk.app.schemaVersion) || 0);
+  const savedVersion = Number((saved && saved.app && saved.app.schemaVersion) || 0);
+  if (!saved || typeof saved !== 'object' || !version || savedVersion >= version) return false;
+  const ms = saved.modelSettings || (saved.modelSettings = {});
+  ms.availableModels = [];
+  ms.embedder = null;
+  ms.classifier = null;
+  ms.generator = null;
+  const stages = Array.isArray(ms.pipeline)
+    ? ms.pipeline
+    : (ms.pipeline && Array.isArray(ms.pipeline.stages) ? ms.pipeline.stages : []);
+  for (const s of stages) if (s && typeof s === 'object') s.model = null;
+  if (!saved.app || typeof saved.app !== 'object') saved.app = {};
+  saved.app.schemaVersion = version;
   return true;
 }
 
@@ -588,6 +621,15 @@ export class ConfigAPI {
       return { success: true, loaded: true };
     }
     return { success: true, loaded: false };
+  }
+
+  async persistConfig(config) {
+    if (!config || typeof config !== 'object' || Array.isArray(config)) {
+      throw new Error('A config object is required to persist');
+    }
+    this.state.config = config;
+    await this.db.setKV('app_config', config);
+    return { success: true };
   }
 
   async exportConfig() {
