@@ -2081,6 +2081,194 @@ function themeMode() {
   return (t && t.mode) || 'light';
 }
 
+// ── Coder panel (in-app coding agent) ───────────────────────────────────────
+let coderHandler = null;
+let coderBusy = false;
+
+function coderEl(id) {
+  return document.getElementById(id);
+}
+
+function scrollCoderBottom() {
+  const t = coderEl('coderTranscript');
+  if (t) t.scrollTop = t.scrollHeight;
+}
+
+function coderMarkdown(text) {
+  return `<div class="chat-md coder-md">${renderMarkdown(text)}</div>`;
+}
+
+export function setCoderStatus(text, level = 'info') {
+  if (!isBrowser) return;
+  const el = coderEl('coderStatusText');
+  if (!el) return;
+  el.innerHTML = text;
+  const card = coderEl('coderStatusCard');
+  if (card) {
+    card.className = `alert border d-flex align-items-center gap-2 py-2 mb-0 ${level === 'ok' ? 'alert-soft-success' : level === 'warn' ? 'alert-soft-warning' : 'alert-soft-info'}`;
+  }
+}
+
+export function appendCodingMessage(role, content, opts = {}) {
+  if (!isBrowser) return;
+  const t = coderEl('coderTranscript');
+  if (!t) return;
+  const isUser = role === 'user';
+  const row = document.createElement('div');
+  row.className = `msg-row ${isUser ? 'from-user' : 'from-bot'} mb-2`;
+  if (opts.animate !== false && !prefersReducedMotion()) row.classList.add('msg-in-coder');
+
+  const bubble = document.createElement('div');
+  bubble.className = isUser ? 'coder-bubble coder-user' : 'coder-bubble coder-bot';
+  if (!isUser) bubble.classList.add('chat-md');
+
+  if (isUser) {
+    bubble.textContent = String(content || '');
+  } else {
+    const label = opts.label ? `<span class="coder-role coder-label">${escapeHtml(opts.label)}</span>` : '';
+    let steps = '';
+    if (opts.steps && opts.steps.length) {
+      const chips = opts.steps.map(s =>
+        `<span class="chip coder-chip" title="${escapeHtml(s.result && s.result.text ? s.result.text.replace(/["'<>]/g, '') : '')}">${escapeHtml(s.tool.replace(/_/g, ' '))}</span>`
+      ).join(' ');
+      if (chips) steps = `<div class="mb-2 d-flex flex-wrap gap-1 align-items-center"><i class="bi bi-terminal me-1 small text-body-secondary"></i>${chips}</div>`;
+    }
+    bubble.innerHTML = label + steps + coderMarkdown(content);
+  }
+  row.appendChild(bubble);
+  t.appendChild(row);
+  scrollCoderBottom();
+}
+
+export function clearCodingTranscript() {
+  if (!isBrowser) return;
+  const t = coderEl('coderTranscript');
+  if (t) t.innerHTML = '';
+}
+
+export function renderCodingExplorer(entries, dir = '.') {
+  if (!isBrowser) return;
+  const list = coderEl('coderExplorer');
+  if (!list) return;
+  list.innerHTML = '';
+  const prefix = dir && dir !== '.' ? dir.replace(/\/+$/, '') + '/' : '';
+  if (!entries.length) {
+    const li = document.createElement('div');
+    li.className = 'list-group-item small text-body-secondary';
+    li.textContent = dir && dir !== '.' ? `${dir}/ is empty` : 'Empty workspace';
+    list.appendChild(li);
+    return;
+  }
+  for (const e of entries) {
+    const a = document.createElement('a');
+    a.href = '#';
+    a.className = 'list-group-item list-group-item-action d-flex align-items-center gap-2 py-1 px-2 coder-file-row';
+    const path = prefix + e.name;
+    a.dataset.path = path;
+    a.innerHTML = `<i class="bi ${e.kind === 'dir' ? 'bi-folder-fill text-warning' : 'bi-file-earmark-code text-primary'} flex-shrink-0"></i><span class="text-truncate small">${escapeHtml(e.name)}</span>${e.kind !== 'dir' && e.size != null ? `<span class="ms-auto small text-body-secondary">${fmtSize(e.size)}</span>` : ''}`;
+    if (e.kind === 'dir') {
+      a.addEventListener('click', ev => {
+        ev.preventDefault();
+        if (coderHandler && coderHandler.list) coderHandler.list(path);
+      });
+    } else {
+      a.addEventListener('click', ev => {
+        ev.preventDefault();
+        const msg = `read open "${path}"`;
+        sendCodingMessage(msg);
+      });
+    }
+    list.appendChild(a);
+  }
+}
+
+function fmtSize(n) {
+  if (n >= 1048576) return `${(n / 1048576).toFixed(1)} MB`;
+  if (n >= 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${n} B`;
+}
+
+export function registerCodingHandler(handler) {
+  coderHandler = handler || null;
+}
+
+export function sendCodingMessage(text) {
+  const input = coderEl('coderInput');
+  const q = String(text == null ? '' : text).trim();
+  if (!q || coderBusy) return;
+  if (!coderHandler || coderHandler.run == null) return;
+  appendCodingMessage('user', q);
+  if (input) input.value = '';
+  coderBusy = true;
+  const send = coderEl('coderSendBtn');
+  if (send) send.disabled = true;
+  appendCodingMessage('assistant', '<span class="spinner-border spinner-border-sm me-2"></span>working…', { label: 'Coder', animate: false });
+  Promise.resolve()
+    .then(() => coderHandler.run(q))
+    .then(res => {
+      const t = coderEl('coderTranscript');
+      if (t && t.lastElementChild && t.lastElementChild.textContent.includes('working')) t.lastElementChild.remove();
+      if (!res || typeof res !== 'object') {
+        appendCodingMessage('assistant', 'I did not get a useful reply. Try again?', { label: 'Coder' });
+        return;
+      }
+      if (res.requireFolder) setCoderStatus('No folder connected — click <strong>Open folder</strong>.', 'warn');
+      appendCodingMessage('assistant', res.response || res.ask || 'Done.', {
+        label: 'Coder',
+        steps: res.steps || []
+      });
+      if (res.steps && res.steps.some(s => s && s.tool && s.tool.includes('write'))) {
+        setCoderStatus('Last change: a real file write in the granted folder (see the diff above).', 'ok');
+      }
+    })
+    .catch(err => {
+      const t = coderEl('coderTranscript');
+      if (t && t.lastElementChild && t.lastElementChild.textContent.includes('working')) t.lastElementChild.remove();
+      appendCodingMessage('assistant', `⚠️ The coding agent hit an error: ${err.message}`, { label: 'Coder' });
+    })
+    .finally(() => {
+      coderBusy = false;
+      const sendBtn = coderEl('coderSendBtn');
+      if (sendBtn) sendBtn.disabled = false;
+    });
+}
+
+export function initCodingPanel(handlers = {}) {
+  if (!isBrowser) return;
+
+  const openBtn = coderEl('coderOpenFolderBtn');
+  if (openBtn && !openBtn.dataset.bound) {
+    openBtn.dataset.bound = '1';
+    openBtn.addEventListener('click', () => {
+      if (handlers.openFolder) handlers.openFolder();
+    });
+  }
+
+  const refreshBtn = coderEl('coderRefreshBtn');
+  if (refreshBtn && !refreshBtn.dataset.bound) {
+    refreshBtn.dataset.bound = '1';
+    refreshBtn.addEventListener('click', () => {
+      if (handlers.list) handlers.list('.');
+    });
+  }
+
+  const clearBtn = coderEl('coderClearBtn');
+  if (clearBtn && !clearBtn.dataset.bound) {
+    clearBtn.dataset.bound = '1';
+    clearBtn.addEventListener('click', () => clearCodingTranscript());
+  }
+
+  const form = coderEl('coderForm');
+  if (form && !form.dataset.bound) {
+    form.dataset.bound = '1';
+    form.addEventListener('submit', ev => {
+      ev.preventDefault();
+      const input = coderEl('coderInput');
+      sendCodingMessage(input ? input.value : '');
+    });
+  }
+}
+
 export function applyTheme() {
   if (!isBrowser) return;
   const dark = themeMode() === 'dark';

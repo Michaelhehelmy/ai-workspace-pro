@@ -152,6 +152,10 @@ export function hasFolderHandle() {
   return !!folderHandle;
 }
 
+export function getFolderHandle() {
+  return folderHandle || null;
+}
+
 export function getFolderName() {
   return (folderHandle && folderHandle.name) || null;
 }

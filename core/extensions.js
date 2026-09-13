@@ -287,6 +287,25 @@ export const BUILTIN_EXTENSIONS = [
     tools: ['create_document', 'create_spreadsheet']
   },
   {
+    id: 'workspace',
+    name: 'Workspace',
+    version: '1.0.0',
+    description: 'The in-app coding agent: list, read, write, edit, and delete files in the folder you grant.',
+    icon: 'bi-code-square',
+    tools: [
+      'list_workspace', 'read_workspace_file', 'write_workspace_file',
+      'edit_workspace_file', 'append_workspace_file', 'delete_workspace_file'
+    ],
+    permissionOverrides: {
+      list_workspace: PERMISSION_LEVELS.READ_ONLY,
+      read_workspace_file: PERMISSION_LEVELS.READ_ONLY,
+      write_workspace_file: PERMISSION_LEVELS.CONFIG,
+      edit_workspace_file: PERMISSION_LEVELS.CONFIG,
+      append_workspace_file: PERMISSION_LEVELS.CONFIG,
+      delete_workspace_file: PERMISSION_LEVELS.CONFIG
+    }
+  },
+  {
     id: 'custom',
     name: 'Dynamic Tools',
     version: '1.0.0',

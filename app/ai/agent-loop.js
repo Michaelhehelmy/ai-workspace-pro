@@ -25,7 +25,7 @@ const DEFAULT_MAX_ITERATIONS = 5;
  * Build OpenAI-style tool schemas from the registered tool list (name,
  * description, parameters) for the backend request.
  */
-function buildToolSchemas(tools) {
+export function buildToolSchemas(tools) {
   if (!Array.isArray(tools) || !tools.length) return [];
   return tools.map(t => ({
     type: 'function',
@@ -70,7 +70,9 @@ export async function agentLoop({
   maxIterations = DEFAULT_MAX_ITERATIONS,
   runner,
   query = message,
-  stateInstance = state
+  stateInstance = state,
+  systemPrompt,
+  tools
 } = {}) {
   if (typeof runner !== 'function') return null;
 
@@ -79,22 +81,27 @@ export async function agentLoop({
 
   // Identity-first system prompt built from the active character (name, persona,
   // workspace, matching skill directives) so the model can answer "what is your
-  // name?", accept renames, and apply persona consistently across turns.
-  const activeChar = (stateInstance.config && Array.isArray(stateInstance.config.characters))
-    ? stateInstance.config.characters.find(c => c.id === stateInstance.activeCharacterId) || null
-    : null;
-  const activeBiz = (stateInstance.config && Array.isArray(stateInstance.config.businesses))
-    ? stateInstance.config.businesses.find(b => b.id === stateInstance.activeBusinessId) || null
-    : null;
-  const char = activeChar || (persona ? { name: 'Assistant', systemPrompt: persona } : null);
-  const systemPrompt = buildSystemPrompt(char, activeBiz, {
-    message,
-    appName: stateInstance.config && stateInstance.config.app && stateInstance.config.app.name
-  });
+  // name?", accept renames, and apply persona consistently across turns. Callers
+  // may override it entirely (e.g. the dedicated coding-agent persona).
+  let systemPromptResolved = systemPrompt;
+  if (!systemPromptResolved) {
+    const activeChar = (stateInstance.config && Array.isArray(stateInstance.config.characters))
+      ? stateInstance.config.characters.find(c => c.id === stateInstance.activeCharacterId) || null
+      : null;
+    const activeBiz = (stateInstance.config && Array.isArray(stateInstance.config.businesses))
+      ? stateInstance.config.businesses.find(b => b.id === stateInstance.activeBusinessId) || null
+      : null;
+    const char = activeChar || (persona ? { name: 'Assistant', systemPrompt: persona } : null);
+    systemPromptResolved = buildSystemPrompt(char, activeBiz, {
+      message,
+      appName: stateInstance.config && stateInstance.config.app && stateInstance.config.app.name
+    });
+  }
 
-  // Tools available to the backend
-  const tools = ((stateInstance.config && stateInstance.config.tools) || []).map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
-  const toolSchemas = buildToolSchemas(tools);
+  // Tools available to the backend: callers may inject a restricted set (e.g.
+  // the coding agent only exposes workspace tools); otherwise all config tools.
+  const toolDefs = tools || ((stateInstance.config && stateInstance.config.tools) || []).map(t => ({ name: t.name, description: t.description, parameters: t.parameters }));
+  const toolSchemas = buildToolSchemas(toolDefs);
 
   const messages = [];
   const allToolCalls = [];
@@ -119,7 +126,7 @@ export async function agentLoop({
 
     try {
       for await (const chunk of backend.generate({
-        system: systemPrompt,
+        system: systemPromptResolved,
         messages,
         tools: toolSchemas,
         maxTokens

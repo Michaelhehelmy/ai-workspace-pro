@@ -83,6 +83,11 @@
         </button>
       </li>
       <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-coder-btn" data-bs-toggle="pill" data-bs-target="#pane-coder" type="button" role="tab">
+          <i class="bi bi-code-square"></i> Coder
+        </button>
+      </li>
+      <li class="nav-item">
         <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-config-btn" data-bs-toggle="pill" data-bs-target="#pane-config" type="button" role="tab">
           <i class="bi bi-gear-wide-connected"></i> Config
         </button>
@@ -536,7 +541,56 @@
         </div>
       </div>
 
-      <!-- Tab 7: Config -->
+      <!-- Tab 7: Coder (in-app coding agent) -->
+      <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4 d-flex flex-column" id="pane-coder" role="tabpanel">
+        <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+          <h4 class="mb-0 me-1">Coder</h4>
+          <span class="badge text-bg-secondary">coding agent</span>
+          <div class="ms-auto d-flex gap-2">
+            <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" id="coderOpenFolderBtn" type="button">
+              <i class="bi bi-folder-plus"></i> <span id="coderOpenFolderLabel">Open folder</span>
+            </button>
+            <button class="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1" id="coderRefreshBtn" type="button" disabled>
+              <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+          </div>
+        </div>
+        <small class="text-body-secondary d-block mb-3">A coding agent that works on <strong>real files</strong> inside the folder you grant — it lists, reads, edits, and creates files with your consent. It never invents file contents; missing details are always asked for.</small>
+
+        <div class="row g-3 flex-grow-1 overflow-auto" id="coderWorkspace">
+          <div class="col-12" id="coderStatusBar">
+            <div class="alert alert-soft-info border d-flex align-items-center gap-2 py-2 mb-0" id="coderStatusCard">
+              <i class="bi bi-info-circle"></i> <span id="coderStatusText">Connect a folder to start coding.</span>
+            </div>
+          </div>
+          <div class="col-md-4 d-none d-md-block">
+            <div class="card border rounded-3 h-100 coder-card">
+              <div class="card-header bg-body-tertiary py-2"><i class="bi bi-folder2-open me-1"></i> Workspace files</div>
+              <div class="list-group list-group-flush overflow-auto" id="coderExplorer" style="max-height: 55vh;"></div>
+            </div>
+          </div>
+          <div class="col-md-8">
+            <div class="card border rounded-3 coder-card">
+              <div class="card-header bg-body-tertiary py-2 d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-chat-square-code me-1"></i> Coder session</span>
+                <button class="btn btn-sm btn-link text-body-secondary p-0" id="coderClearBtn" type="button"><i class="bi bi-trash"></i></button>
+              </div>
+              <div class="card-body p-0 d-flex flex-column" style="min-height: 40vh;">
+                <div class="overflow-auto flex-grow-1 p-3" id="coderTranscript"></div>
+                <div class="border-top p-2 bg-body-tertiary">
+                  <form id="coderForm" class="d-flex gap-2" autocomplete="off">
+                    <input class="form-control form-control-sm flex-grow-1" id="coderInput" type="text" placeholder='e.g. "read assets/config.json" or "replace a with b in app.js"' aria-label="Talk to the coding agent">
+                    <button class="btn btn-sm btn-primary d-flex align-items-center gap-1 flex-shrink-0" id="coderSendBtn" type="submit"><i class="bi bi-send"></i> Run</button>
+                  </form>
+                  <small class="text-body-secondary d-block mt-1 px-1" id="coderHint">Write/edit changes are real file writes inside the granted folder — review the diff in the reply.</small>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tab 8: Config -->
       <div class="tab-pane fade flex-grow-1 overflow-auto p-3 p-md-4" id="pane-config" role="tabpanel">
         <h4 class="mb-1">System Configuration</h4>
         <small class="text-body-secondary d-block mb-3">Everything in the app is derived from this JSON. Edit directly or import/export.</small>

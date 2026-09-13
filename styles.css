@@ -1028,6 +1028,133 @@ textarea:focus-visible {
 }
 
 /* --------------------------------------------------------------------------
+   Coder panel + in-app coding agent
+   -------------------------------------------------------------------------- */
+.coder-card {
+  animation: pane-in 0.28s ease-out both;
+}
+.coder-card .card-header {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.coder-bubble {
+  padding: 0.55rem 0.8rem;
+  border-radius: 0.9rem;
+  max-width: 100%;
+  font-size: 0.92rem;
+  box-shadow: var(--shadow-xs);
+  animation: msg-in 0.26s ease-out both;
+}
+.coder-user {
+  margin-left: auto;
+  background: var(--bs-primary-bg-subtle);
+  border: 1px solid var(--bs-primary-border-subtle);
+  color: var(--bs-body-color);
+}
+.coder-bot {
+  margin-right: auto;
+  background: var(--bs-tertiary-bg);
+  border: 1px solid var(--bs-border-color);
+}
+.coder-role.coder-label {
+  display: inline-block;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  margin-bottom: 0.25rem;
+}
+.chat-md.coder-md {
+  line-height: 1.55;
+}
+
+.coder-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 999px;
+  background: var(--bs-body-bg);
+  color: var(--bs-body-color);
+  animation: pop-in 0.22s ease-out both;
+}
+
+.coder-file-row {
+  transition: background-color 0.15s ease, transform 0.12s ease;
+}
+.coder-file-row:hover {
+  background-color: var(--bs-tertiary-bg);
+  transform: translateX(2px);
+}
+
+#coderTranscript {
+  scroll-behavior: smooth;
+}
+#coderInput:focus,
+#coderInput:focus-visible {
+  box-shadow: 0 0 0 0.2rem var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+}
+
+.alert-soft-info    { background-color: var(--bs-info-bg-subtle);    color: var(--bs-info-text-emphasis);    border-color: var(--bs-info-border-subtle); }
+.alert-soft-success { background-color: var(--bs-success-bg-subtle); color: var(--bs-success-text-emphasis); border-color: var(--bs-success-border-subtle); }
+.alert-soft-warning { background-color: var(--bs-warning-bg-subtle); color: var(--bs-warning-text-emphasis); border-color: var(--bs-warning-border-subtle); }
+
+/* --------------------------------------------------------------------------
+   Whole-app motion polish — soft entrances and human feedback
+   -------------------------------------------------------------------------- */
+.tab-pane.fade.active {
+  animation: pane-in 0.32s cubic-bezier(0.2, 0.7, 0.25, 1) both;
+}
+
+@keyframes pane-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+.nav-link {
+  transition: color 0.15s ease, background-color 0.15s ease, transform 0.12s ease, border-color 0.15s ease;
+}
+.nav-link:hover { transform: translateX(2px); }
+.nav-link.active { transform: translateX(0); }
+.nav-link:active { transform: scale(0.985); }
+
+.card {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn {
+  transition: transform 0.1s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.btn:active { transform: scale(0.96); }
+
+.list-group-item,
+.explorer-table-container tbody tr,
+#bizSwitchMenu .dropdown-item {
+  transition: background-color 0.15s ease, transform 0.12s ease;
+}
+
+#chatComposer {
+  transition: box-shadow 0.18s ease, border-color 0.18s ease;
+}
+#chatComposer:focus-within {
+  box-shadow: 0 0 0 0.2rem var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+}
+
+/* --------------------------------------------------------------------------
    Motion preferences
    -------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
@@ -1036,6 +1163,10 @@ textarea:focus-visible {
   #chatMessages { scroll-behavior: auto; }
   #toastContainer .toast { animation: none; }
   .quick-prompt, .btn, .card, .list-group-item { transition: none !important; }
+  .tab-pane.fade.active, .coder-card, .coder-bubble, .coder-chip, .coder-file-row,
+  .msg-in-coder, #coderTranscript { animation: none !important; }
+  .nav-link { transition: none !important; transform: none !important; }
+  #chatComposer { transition: none !important; }
 }
 
 /* --------------------------------------------------------------------------

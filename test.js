@@ -117,7 +117,25 @@ import {
   setFolderHandle,
   clearFolderHandle,
   hasFolderHandle,
-  getFolderName
+  getFolderName,
+  getFolderHandle,
+  setWorkspaceAdapter,
+  getWorkspaceAdapter,
+  createMemAdapter,
+  listWorkspace,
+  readWorkspaceFile,
+  writeWorkspaceFile,
+  editWorkspaceFile,
+  appendWorkspaceFile,
+  deleteWorkspaceFile,
+  makePatch,
+  renderPatch,
+  WorkspaceError,
+  assertSafeRelPath,
+  WORKSPACE_MAX_FILE_BYTES,
+  recognizeCodingRequest,
+  runCodingAgent,
+  CODER_HELP
 } from './app.js';
 import worker from './worker/index.js';
 
@@ -1321,31 +1339,37 @@ async function runAllTests() {
   });
 
   // 5. Tool Registry & Sandboxing
-  await runTest('ToolRegistry', 'registers all 27 tools from config', () => {
+  await runTest('ToolRegistry', 'registers all 33 tools from config + workspace', () => {
     const registry = new ToolRegistry();
     registerAllCoreTools(registry, testDb, state, agentComm, googleAPI);
     const tools = registry.getAllTools();
-    assertEquals(tools.length, 27, `Expected exactly 27 registered tools, got ${tools.length}`);
+    assertEquals(tools.length, 33, `Expected exactly 33 registered tools, got ${tools.length}`);
     assert(registry.hasTool('add_transaction'), 'add_transaction tool should exist');
     assert(registry.hasTool('web_search'), 'web_search tool should exist');
     assert(registry.hasTool('delegate_to_agent'), 'delegate_to_agent tool should exist');
     assert(registry.hasTool('create_document'), 'create_document tool should exist');
     assert(registry.hasTool('create_spreadsheet'), 'create_spreadsheet tool should exist');
+    assert(registry.hasTool('list_workspace'), 'list_workspace tool should exist');
+    assert(registry.hasTool('read_workspace_file'), 'read_workspace_file tool should exist');
+    assert(registry.hasTool('write_workspace_file'), 'write_workspace_file tool should exist');
+    assert(registry.hasTool('edit_workspace_file'), 'edit_workspace_file tool should exist');
   });
 
   // 5b. Extensions (Pi-style modular bundles)
-  await runTest('Extensions', 'built-in manifest groups all 27 tools into named extensions', () => {
+  await runTest('Extensions', 'built-in manifest groups all 33 tools into named extensions', () => {
     const reg = new ExtensionRegistry();
     applyBuiltinExtensions(reg);
     const exts = reg.listExtensions();
     assertEquals(exts.length, BUILTIN_EXTENSIONS.length);
     const all = exts.flatMap(e => e.tools);
-    assertEquals(all.length, 27, `Expected 27 tools grouped, got ${all.length}`);
+    assertEquals(all.length, 33, `Expected 33 tools grouped, got ${all.length}`);
     assertEquals(reg.getExtensionFor('add_transaction').id, 'finance');
     assertEquals(reg.getExtensionFor('web_search').id, 'web');
     assertEquals(reg.getExtensionFor('execute_chain').id, 'system');
     assertEquals(reg.getExtensionFor('google_drive_list').id, 'google');
     assertEquals(reg.getExtensionFor('create_document').id, 'documents');
+    assertEquals(reg.getExtensionFor('list_workspace').id, 'workspace');
+    assertEquals(reg.getExtensionFor('delete_workspace_file').id, 'workspace');
     assertEquals(reg.isEnabled('system'), true);
   });
 
@@ -3012,6 +3036,117 @@ async function runAllTests() {
     assertEquals(summary.total, 0);
     assert(Array.isArray(summary.errors) && summary.errors.length === 0, 'no errors reported');
   });
+
+  // ── Workspace + coding agent (hermetic; in-memory adapter) ─────────────────
+  await runTest('Workspace', 'no folder → requireFolder guidance', async () => {
+    setWorkspaceAdapter(null);
+    const res = await runCodingAgent('list files', { state, runner: async () => ({ text: 'never reached' }) });
+    assert(res && res.requireFolder === true, 'expected requireFolder flag when no adapter is set');
+    assert(typeof res.response === 'string' && res.response.includes('Open folder'), 'guidance should point at the Open folder action');
+  });
+
+  await runTest('Workspace', 'path safety rejects escapes', () => {
+    const throws = fn => {
+      let threw = false;
+      try { fn(); } catch (_) { threw = true; }
+      assert(threw, 'expected a WorkspaceError');
+    };
+    throws(() => assertSafeRelPath('/etc/passwd'));
+    throws(() => assertSafeRelPath('../escape.txt'));
+    throws(() => assertSafeRelPath('C:\\windows\\x'));
+    throws(() => assertSafeRelPath('a/b\0c'));
+    throws(() => assertSafeRelPath(''));
+    assertEquals(assertSafeRelPath('src/utils/math.js'), 'src/utils/math.js');
+  });
+
+  await runTest('Workspace', 'mem adapter list/write/read/edit/append/delete', async () => {
+    setWorkspaceAdapter(createMemAdapter({ 'a.txt': 'hello\nworld', 'nested/b.txt': 'b' }));
+    const listed = await listWorkspace('.');
+    const names = listed.entries.map(e => e.name).sort();
+    assertEquals(names.join(','), 'a.txt,nested');
+    assert(listed.entries.find(e => e.name === 'a.txt').kind === 'file');
+    assert(listed.entries.find(e => e.name === 'nested').kind === 'dir');
+
+    const read = await readWorkspaceFile('a.txt');
+    assertEquals(read.content, 'hello\nworld');
+    assertEquals(read.lines, 2);
+
+    const w = await writeWorkspaceFile('new.txt', 'fresh');
+    assertEquals(w.bytes, 5);
+    assertEquals((await readWorkspaceFile('new.txt')).content, 'fresh');
+
+    const edit = await editWorkspaceFile('a.txt', 'world', 'planet');
+    assert(edit.patch.removedCount >= 1 && edit.patch.addedCount >= 1, 'edit should report a patch');
+    assertEquals((await readWorkspaceFile('a.txt')).content, 'hello\nplanet');
+
+    const app = await appendWorkspaceFile('a.txt', 'bye');
+    assert(app.patch.addedCount >= 1, 'append should report added lines');
+    assert((await readWorkspaceFile('a.txt')).content.includes('bye'), 'appended text must be present');
+
+    await deleteWorkspaceFile('new.txt');
+    let gone = false;
+    try { await readWorkspaceFile('new.txt'); } catch (e) { gone = e && e.code === 'E_NOENT'; }
+    assert(gone, 'deleted file should raise E_NOENT');
+  });
+
+  await runTest('Workspace', 'edit reports honest E_NO_MATCH instead of guessing', async () => {
+    setWorkspaceAdapter(createMemAdapter({ 'app.js': 'const x = 1' }));
+    let code = null;
+    try { await editWorkspaceFile('app.js', 'noSuchToken', 'y'); } catch (e) { code = e.code; }
+    assertEquals(code, 'E_NO_MATCH');
+  });
+
+  await runTest('Workspace', 'makePatch renders a readable unified diff', () => {
+    const patch = makePatch('one\ntwo\nthree', 'one\nTWO\nthree');
+    assert(patch.removedCount === 1 && patch.addedCount === 1, 'single-line change');
+    const text = renderPatch(patch);
+    assert(text.includes('- two') && text.includes('+ TWO'), `diff should show both sides, got: ${text}`);
+    assert(renderPatch(makePatch('x', 'x')).includes('no change'), 'identical content reports no change');
+  });
+
+  await runTest('Coding', 'recognizeCodingRequest maps natural phrasings', () => {
+    let r = recognizeCodingRequest('list files');
+    assertEquals(r && r.tool, 'list_workspace');
+    r = recognizeCodingRequest('read assets/config.json');
+    assertEquals(r && r.tool, 'read_workspace_file');
+    assertEquals(r.params.path, 'assets/config.json');
+    r = recognizeCodingRequest('read the readme');
+    assertEquals(r && r.tool, 'read_workspace_file');
+    assertEquals(r.params.path, 'readme');
+    r = recognizeCodingRequest('create a file notes.md: remember to water the plants');
+    assertEquals(r && r.tool, 'write_workspace_file');
+    assertEquals(r.params.path, 'notes.md');
+    assertEquals(r.params.content, 'remember to water the plants');
+    r = recognizeCodingRequest('replace "Version 1" with "Version 2" in config.json');
+    assertEquals(r && r.tool, 'edit_workspace_file');
+    assertEquals(r.params.old_text, 'Version 1');
+    assertEquals(r.params.new_text, 'Version 2');
+    assertEquals(r.params.path, 'config.json');
+    r = recognizeCodingRequest('delete tmp/scratch.txt');
+    assertEquals(r && r.tool, 'delete_workspace_file');
+  });
+
+  await runTest('Coding', 'missing content is asked for, never invented', () => {
+    const r = recognizeCodingRequest('create a file notes.md');
+    assert(r && r.ask, 'expected an ask when no content is given');
+    assert(typeof r.ask === 'string' && r.ask.length > 0);
+    const r2 = recognizeCodingRequest('hello there, how are you?');
+    assertEquals(r2, null);
+  });
+
+  await runTest('Coding', 'runCodingAgent performs a real write via the tool runner', async () => {
+    setWorkspaceAdapter(createMemAdapter({}));
+    const runner = (tool, params) => {
+      if (tool === 'write_workspace_file') return writeWorkspaceFile(params.path, params.content);
+      throw new Error('unexpected tool ' + tool);
+    };
+    const res = await runCodingAgent('create a file hi.txt: hello', { state, runner });
+    assert(res.ok === true, 'coded write should succeed');
+    assertEquals((await readWorkspaceFile('hi.txt')).content, 'hello');
+    assert(res.steps.length === 1 && res.steps[0].tool === 'write_workspace_file', 'steps should record the tool call');
+  });
+
+  setWorkspaceAdapter(null);
 
   // Summary
   console.log('\n════════════════════════════════════════════════════════════');

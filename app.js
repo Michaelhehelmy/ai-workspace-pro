@@ -25,7 +25,9 @@ import { loadConfiguration, init, agentComm, googleAPI } from './app/init.js';
 import { Skill, SkillLibrary, skillLibrary, BUILTIN_SKILLS, buildSystemPrompt } from './core/skills.js';
 import { compactChat, buildDigestSummary } from './core/compaction.js';
 import { detectDevice, defaultProbes, deviceMemoryToMb, estimateMemoryMb, classifyFormFactor, getModelFit, recommendModelSet, describeDevice, DEVICE_TIERS } from './core/device.js';
-import { crc32, zipBytes, inspectZip, buildDocx, buildXlsx, saveFile, requestFolder, restoreFolder, hasFolderHandle, getFolderName, setFolderHandle, clearFolderHandle } from './core/files.js';
+import { crc32, zipBytes, inspectZip, buildDocx, buildXlsx, saveFile, requestFolder, restoreFolder, hasFolderHandle, getFolderName, setFolderHandle, clearFolderHandle, getFolderHandle } from './core/files.js';
+import { setWorkspaceAdapter, getWorkspaceAdapter, createFsAdapter, createMemAdapter, listWorkspace, readWorkspaceFile, writeWorkspaceFile, editWorkspaceFile, appendWorkspaceFile, deleteWorkspaceFile, makePatch, renderPatch, WorkspaceError, assertSafeRelPath, normalizeRelPath, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_TREE_ENTRIES } from './core/workspace.js';
+import { runCodingAgent, recognizeCodingRequest, CODER_HELP, WORKSPACE_TOOLS, CODER_PERSONA, buildCoderSystemPrompt } from './app/coding.js';
 import { startPiRpc, createPiClient, createPiServer, PiRpcError, PI_NODE, buildRequest, defaultMethods } from './app/pi/pi-rpc.js';
 
 export {
@@ -141,13 +143,37 @@ export {
   hasFolderHandle,
   getFolderName,
   setFolderHandle,
-  clearFolderHandle
+  clearFolderHandle,
+  getFolderHandle,
+  setWorkspaceAdapter,
+  getWorkspaceAdapter,
+  createFsAdapter,
+  createMemAdapter,
+  listWorkspace,
+  readWorkspaceFile,
+  writeWorkspaceFile,
+  editWorkspaceFile,
+  appendWorkspaceFile,
+  deleteWorkspaceFile,
+  makePatch,
+  renderPatch,
+  WorkspaceError,
+  assertSafeRelPath,
+  normalizeRelPath,
+  WORKSPACE_MAX_FILE_BYTES,
+  WORKSPACE_MAX_TREE_ENTRIES,
+  runCodingAgent,
+  recognizeCodingRequest,
+  CODER_HELP,
+  WORKSPACE_TOOLS,
+  CODER_PERSONA,
+  buildCoderSystemPrompt
 };
 
 if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
   init().then(() => {
     const uiPromise = import('./app/ui.js');
-    uiPromise.then(ui => {
+    uiPromise.then(async ui => {
       ui.registerSendHandler(async (text) => {
         // The busy/typing lifecycle is owned by ui.sendMessage's setBusy().
         // Real-model pipeline: data tools succeed honestly; chat-only paths
@@ -190,6 +216,56 @@ if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
           });
         }
       });
+
+      // ── Coder panel: the in-app coding agent ────────────────────────────
+      const coderRunner = (tool, params) => executeTool(tool, params, state);
+
+      const codingList = async (dir = '.') => {
+        try {
+          const res = await listWorkspace(dir || '.');
+          ui.renderCodingExplorer(res.entries, res.dir);
+        } catch (err) {
+          ui.setCoderStatus(err.message, 'warn');
+        }
+      };
+
+      ui.registerCodingHandler({
+        run: async (text) => {
+          try {
+            return await runCodingAgent(text, { state, runner: coderRunner });
+          } catch (err) {
+            return { ok: false, response: `⚠️ The coding agent hit an error: ${formatModelError(err)}` };
+          }
+        },
+        list: codingList,
+        openFolder: async () => {
+          if (typeof window.showDirectoryPicker !== 'function') {
+            ui.setCoderStatus('Folder access (File System Access API) is not supported in this browser. Try Chrome or Edge.', 'warn');
+            return;
+          }
+          const name = await requestFolder().catch(() => null);
+          if (!name) return;
+          const h = getFolderHandle();
+          if (!h) return;
+          setWorkspaceAdapter(createFsAdapter(h));
+          const refreshBtn = document.getElementById('coderRefreshBtn');
+          if (refreshBtn) refreshBtn.disabled = false;
+          ui.setCoderStatus(`Connected to <strong>${name}</strong> — the coding agent can read and (with your consent) write files here.`, 'ok');
+          await codingList('.');
+        }
+      });
+
+      // If a folder grant survived from a previous session, reconnect it.
+      if (hasFolderHandle() && getFolderHandle()) {
+        try {
+          setWorkspaceAdapter(createFsAdapter(getFolderHandle()));
+          const refreshBtn = document.getElementById('coderRefreshBtn');
+          if (refreshBtn) refreshBtn.disabled = false;
+          ui.setCoderStatus(`Reconnected to <strong>${getFolderName()}</strong>.`, 'ok');
+          await codingList('.');
+        } catch (_) { /* fall through: user picks a folder when needed */ }
+      }
+      ui.initCodingPanel();
     });
     console.log('[AI Workspace Pro] Ready.');
   }).catch(err => {

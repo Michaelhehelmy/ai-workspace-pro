@@ -18,6 +18,17 @@ import { composeToolText, generateChatResponse, routeToAgent } from './pipeline.
 import { setCharacterEmotion } from './ui.js';
 import { extensionRegistry, applyBuiltinExtensions } from '../core/extensions.js';
 import { buildDocx, buildXlsx, saveFile, defaultDocxFilename } from '../core/files.js';
+import {
+  listWorkspace,
+  readWorkspaceFile,
+  writeWorkspaceFile,
+  editWorkspaceFile,
+  appendWorkspaceFile,
+  deleteWorkspaceFile,
+  renderPatch,
+  WorkspaceError,
+  getWorkspaceAdapter
+} from '../core/workspace.js';
 
 let workerAPIProbe = null;
 function hasWorkerAPI() {
@@ -1069,9 +1080,187 @@ export function registerAllCoreTools(registry, dbInstance, stateInstance, agentC
     }
   });
 
+  // ── Workspace (the in-app coding agent) ──────────────────────────────────
+  // Real file operations inside the single folder the user granted via the
+  // File System Access picker (see core/workspace.js). Writes are real bytes,
+  // surfaced honestly with a diff — never fabricated.
+  if (!registry.hasTool('list_workspace')) {
+    registry.register({
+      name: 'list_workspace',
+      description: 'List files and folders in the granted workspace directory (coding agent)',
+      schema: { parameters: { dir: { type: 'string', required: false } } },
+      permissionLevel: registry.permissionLevels.READ_ONLY,
+      icon: 'bi-folder-check',
+      execute: async (params) => {
+        try {
+          const res = await listWorkspace(params.dir || '.');
+          const folder = getWorkspaceAdapter() ? getWorkspaceAdapter().label : res.dir;
+          if (!res.entries.length) return { text: `The folder **${folder}/${res.dir}** is empty.` };
+          const rows = res.entries.map(e =>
+            e.kind === 'dir'
+              ? `📁 **${e.name}/**`
+              : `📄 ${e.name}${e.size != null ? ` _(${fmtBytes(e.size)})_` : ''}`
+          ).join('\n');
+          return { text: `### 🗂 Workspace: ${folder}${res.dir === '.' ? '' : '/' + res.dir}\n\n${rows}\n\n_Ask me to "read <file>" to inspect one._` };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+
+    registry.register({
+      name: 'read_workspace_file',
+      description: 'Read a text file from the granted workspace (coding agent)',
+      schema: {
+        parameters: {
+          path: { type: 'string', required: true },
+          lines: { type: 'number', required: false }
+        }
+      },
+      permissionLevel: registry.permissionLevels.READ_ONLY,
+      icon: 'bi-file-earmark-code',
+      execute: async (params) => {
+        try {
+          const res = await readWorkspaceFile(params.path);
+          const head = params.lines ? Number(params.lines) : false;
+          const preview = head
+            ? res.content.split('\n').slice(0, Math.max(1, head)).join('\n')
+            : res.content;
+          const truncated = head && head < res.lines;
+          return {
+            text: `### 📄 ${res.path} _(${res.lines} lines, ${fmtBytes(res.bytes)})_\n\n\`\`\`\n${clipText(preview, 2000)}\n\`\`\`${truncated ? `\n_…showing the first ${head} lines._` : ''}`
+          };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+
+    registry.register({
+      name: 'write_workspace_file',
+      description: 'Create or overwrite a text file in the granted workspace (coding agent)',
+      schema: {
+        parameters: {
+          path: { type: 'string', required: true },
+          content: { type: 'string', required: true }
+        }
+      },
+      permissionLevel: registry.permissionLevels.CONFIG,
+      icon: 'bi-file-earmark-plus',
+      execute: async (params) => {
+        if (typeof params.content !== 'string' || !params.content.trim()) {
+          return { text: "I don't write empty files. Tell me the full content you want in the file, and I'll write it exactly as given." };
+        }
+        try {
+          const res = await writeWorkspaceFile(params.path, params.content);
+          return { text: `✍️ Wrote **${res.path}** _(${fmtBytes(res.bytes)})_ to your workspace folder.` };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+
+    registry.register({
+      name: 'edit_workspace_file',
+      description: 'Replace exact text inside a workspace file — returns the diff (coding agent)',
+      schema: {
+        parameters: {
+          path: { type: 'string', required: true },
+          old_text: { type: 'string', required: true },
+          new_text: { type: 'string', required: true }
+        }
+      },
+      permissionLevel: registry.permissionLevels.CONFIG,
+      icon: 'bi-scissors',
+      execute: async (params) => {
+        try {
+          const res = await editWorkspaceFile(params.path, params.old_text, params.new_text);
+          const p = res.patch || { removedCount: 0, addedCount: 0 };
+          return {
+            text: `✂️ Edited **${res.path}** _(−${p.removedCount} line${p.removedCount === 1 ? '' : 's'} / +${p.addedCount})_. What changed:\n\n\`\`\`diff\n${renderPatch(res.patch)}\n\`\`\``
+          };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+
+    registry.register({
+      name: 'append_workspace_file',
+      description: 'Append text to the end of a workspace file (create it if missing)',
+      schema: {
+        parameters: {
+          path: { type: 'string', required: true },
+          content: { type: 'string', required: true }
+        }
+      },
+      permissionLevel: registry.permissionLevels.CONFIG,
+      icon: 'bi-file-earmark-plus',
+      execute: async (params) => {
+        if (typeof params.content !== 'string' || !params.content.trim()) {
+          return { text: 'Give me the text to append, and I will add it to the end of the file.' };
+        }
+        try {
+          const res = await appendWorkspaceFile(params.path, params.content);
+          const p = res.patch || { addedCount: 0 };
+          return { text: `➕ Appended **${p.addedCount}** line${p.addedCount === 1 ? '' : 's'} to **${res.path}**.` };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+
+    registry.register({
+      name: 'delete_workspace_file',
+      description: 'Delete a file or folder from the granted workspace (coding agent)',
+      schema: {
+        parameters: { path: { type: 'string', required: true } }
+      },
+      permissionLevel: registry.permissionLevels.CONFIG,
+      icon: 'bi-trash',
+      execute: async (params) => {
+        try {
+          await deleteWorkspaceFile(params.path);
+          return { text: `🗑️ Deleted **${params.path}** from the workspace.` };
+        } catch (err) {
+          return workspaceErrText(err);
+        }
+      }
+    });
+  }
+
   // Group the freshly-registered tools into named extensions (Pi-style bundles)
   // and attach the extension registry to this registry instance.
   applyBuiltinExtensions(extensionRegistry, registry);
+}
+
+// Friendly, honest text for workspace failures (never canned replies — the
+// real state of the folder is reported).
+function workspaceErrText(err) {
+  if (err instanceof WorkspaceError) {
+    if (err.code === 'E_NO_FOLDER') {
+      return {
+        text: 'I can’t touch the filesystem yet — no workspace folder is connected. Open **Coder → Open folder** to grant me read/write access to one directory, then try again.',
+        requireFolder: true
+      };
+    }
+    return { text: `⚠️ ${err.message}`, error: err.code };
+  }
+  return { text: `⚠️ ${err && err.message ? err.message : String(err)}` };
+}
+
+function fmtBytes(n) {
+  if (n == null || Number.isNaN(Number(n))) return '';
+  const v = Number(n);
+  if (v >= 1048576) return `${(v / 1048576).toFixed(1)} MB`;
+  if (v >= 1024) return `${(v / 1024).toFixed(1)} KB`;
+  return `${v} B`;
+}
+
+function clipText(s, max = 2000) {
+  const t = String(s == null ? '' : s);
+  if (t.length <= max) return t;
+  return t.slice(0, max) + '\n…(truncated)';
 }
 
 // Compose a friendly save-confirmation for files.js saveFile() results.
