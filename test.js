@@ -1311,6 +1311,57 @@ async function runAllTests() {
     assertEquals(body.ok, false);
   });
 
+  await runTest('Worker', '/api/hub/info rejects non-repo paths', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/hub/info?path=../../etc/passwd', { method: 'GET' }),
+      {}
+    );
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assert(body.ok === false, 'expected a typed error body');
+  });
+
+  await runTest('Worker', '/api/hub/models proxies the Hub listing CORS-open', async () => {
+    const origFetch = globalThis.fetch;
+    const upstream = { pipeline_tag: 'feature-extraction', id: 'Xenova/all-MiniLM-L6-v2' };
+    globalThis.fetch = async (url) => {
+      assert(String(url).startsWith('https://huggingface.co/api/models?'), 'upstream must be the Hub models API');
+      return new Response(JSON.stringify([upstream]), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/models?library=transformers.js&sort=downloads&direction=-1&limit=5', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.json();
+      assertEquals(body[0].id, 'Xenova/all-MiniLM-L6-v2');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/info proxies a model info blob', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async (url) => {
+      assert(String(url).startsWith('https://huggingface.co/api/models/Xenova/all-MiniLM-L6-v2?blobs=true'), 'upstream must include blobs=true');
+      return new Response(JSON.stringify({ id: 'Xenova/all-MiniLM-L6-v2', gated: false, siblings: [] }), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/info?path=Xenova/all-MiniLM-L6-v2', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.json();
+      assertEquals(body.id, 'Xenova/all-MiniLM-L6-v2');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   await runTest('Worker', 'non-api requests are delegated to the ASSETS binding', async () => {
     let served = null;
     const env = {

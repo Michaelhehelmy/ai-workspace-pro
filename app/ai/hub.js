@@ -23,6 +23,28 @@ function isText2Text(m) {
   return !!arch || (m.pipeline_tag || '').toLowerCase().includes('text2text');
 }
 
+// The deployed Worker proxies the Hub API CORS-open (/api/hub/*). Detect it
+// once so we prefer the same-origin proxy (HF error pages carry no CORS
+// headers, so direct browser fetches can be blocked) and fall back to a direct
+// Hub fetch on bare static hosting where no Worker is present.
+let workerProbe = null;
+function hasWorkerHubProxy() {
+  if (!isBrowser) return Promise.resolve(false);
+  if (!workerProbe) {
+    workerProbe = fetch('/api/health', { cache: 'no-store' })
+      .then(r => r.ok)
+      .catch(() => false);
+  }
+  return workerProbe;
+}
+
+async function modelsUrl(params) {
+  const query = params.toString();
+  return (await hasWorkerHubProxy())
+    ? `/api/hub/models?${query}`
+    : `https://huggingface.co/api/models?${query}`;
+}
+
 export async function discoverModels(type, { limit = 25, signal } = {}) {
   if (!isBrowser) return [];
   const max = Math.min(Math.max(limit || 25, 1), 100);
@@ -31,7 +53,7 @@ export async function discoverModels(type, { limit = 25, signal } = {}) {
   params.set('sort', 'downloads');
   params.set('direction', '-1');
   params.set('limit', '100');
-  const base = 'https://huggingface.co/api/models?' + params.toString();
+  const base = await modelsUrl(params);
   const res = await fetch(base, { signal, headers: { accept: 'application/json' } });
   if (!res.ok) throw new Error('Hugging Face search failed (HTTP ' + res.status + ').');
   const all = await res.json();
@@ -57,7 +79,10 @@ export async function discoverModels(type, { limit = 25, signal } = {}) {
 
 export async function getHubModelInfo(id, { signal } = {}) {
   if (!isBrowser) return null;
-  const res = await fetch('https://huggingface.co/api/models/' + String(id) + '?blobs=true', {
+  const base = (await hasWorkerHubProxy())
+    ? '/api/hub/info?path=' + encodeURIComponent(String(id))
+    : 'https://huggingface.co/api/models/' + String(id) + '?blobs=true';
+  const res = await fetch(base, {
     signal,
     headers: { accept: 'application/json' },
   });
