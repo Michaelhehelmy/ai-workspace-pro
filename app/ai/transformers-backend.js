@@ -249,6 +249,23 @@ function toModelError(err, stageDef, modelId) {
   );
 }
 
+/**
+ * Load failure that happens even though the model's API entry resolved fine —
+ * i.e. the Hub listing is reachable but the actual file downloads
+ * (huggingface.co/[model]/resolve/main/...) did not. This is almost always a
+ * routing/egress problem for the download path, not a missing model.
+ */
+function hubDownloadError(err, stageDef, modelId) {
+  return new ModelError(
+    'E_LOAD_MODEL',
+    stageDef ? stageDef.key : null,
+    `Failed to download model "${modelId}"${stageDef ? ` for stage "${stageDef.key}"` : ''}: ${(err && err.message) || 'network error'}. The Hugging Face API answered, but downloading the model files failed.`,
+    'This usually means huggingface.co download requests are being routed to an unreachable mirror/CDN on your network. Test: open https://huggingface.co/' + String(modelId || '') + '/resolve/main/config.json in a new tab — if it 404s while the page loads, switch networks or use a VPN and retry. Once downloaded, the model runs offline.',
+    modelId,
+    err
+  );
+}
+
 // ── Hugging Face Hub reachability guard ──────────────────────────────────────
 // A catalog id that 404s on the Hub surfaces as baffling CORS noise in the
 // browser, because error responses omit `Access-Control-Allow-Origin`. Fetch a
@@ -364,6 +381,9 @@ async function buildPipeline(stageDef, modelId) {
       }
     });
   } catch (err) {
+    if (isBrowser && _hubCheck.has(stageDef.key + ':' + modelId)) {
+      throw hubDownloadError(err, stageDef, modelId);
+    }
     throw toModelError(err, stageDef, modelId);
   }
 
