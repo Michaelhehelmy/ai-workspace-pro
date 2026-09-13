@@ -13,7 +13,7 @@
  */
 
 const SERVICE = 'ai-workspace-pro';
-const VERSION = '2.2.0';
+const VERSION = '2.3.0';
 
 function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
@@ -28,6 +28,25 @@ function json(body, status = 200, extra = {}) {
 
 // "org/repo" shape used by every Hugging Face model id the catalog touches.
 const REPO_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+
+// Model-file download path shape: <org>/<repo>/resolve/<main|sha>/<file...>.
+// The file segment may include subdirectories (e.g. onnx/tokenizer.json) but
+// never ".." or "//", so the proxy stays a fixed-target pass-through.
+const RAW_MODEL_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/resolve\/(main|[0-9a-f]{40})\/([A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*)$/;
+
+// Workers cap response bodies at 100MB, and a ~0.5B ONNX model ships weight
+// blobs (model.onnx / model.onnx_data / *quantized / *.safetensors) far larger
+// than that. The LFS/CDN hosts those blobs are served from send
+// `access-control-allow-origin: *`, so the browser can fetch them directly.
+// Every other file a Transformers.js model needs (config.json, tokenizer.json,
+// tokenizer_config.json, spiece.model, vocab.json, merges.txt, preprocessor
+// configs, …) is small, so this worker streams those through CORS-open with a
+// stable same-origin cache key. The split is decided by file name because the
+// upstream content-type/content-length is not trustworthy (Hugging Face serves
+// even JSON as application/octet-stream over its xet/CDN path, sometimes without
+// a content-length).
+const RAW_MAX_STREAM_BYTES = 8 * 1024 * 1024;
+const RAW_LARGE_FILE_RE = /\.(?:safetensors|onnx|onnx_data|bin|pt|pth|msgpack|gguf|ggml|h5|tflite|npy)\b/i;
 
 // Server-side response pass-through. The browser cannot always read upstream
 // JSON directly (DuckDuckGo and Hugging Face do not send Access-Control-Allow-
@@ -109,6 +128,45 @@ export default {
       }
       const query = forward.toString();
       return proxyUpstream(`https://huggingface.co/api/models/${modelPath}${query ? '?' + query : ''}`, 300);
+    }
+
+    // Server-side model-file proxy for the Transformers.js runtime. The on-device
+    // engine downloads config/tokenizer/weights directly from
+    // huggingface.co/[model]/resolve/[revision]/[file]; Hugging Face answers with
+    // redirects (resolve-cache, CDN), and a redirect target that 404s or lacks
+    // CORS headers surfaces in the browser as confusing "Cross-Origin Request
+    // Blocked … Status code: 404" errors. Routing the same-origin Worker lets us
+    // (a) follow the redirect chain server-side, (b) re-serve small files CORS-open
+    // with a stable cache key, and (c) answer a readable JSON error on failure.
+    // Large weight blobs are 302-redirected back to the direct URL (see
+    // RAW_MAX_STREAM_BYTES); they are served by LFS/CDN hosts that already send
+    // `access-control-allow-origin: *`, so the browser can fetch them directly.
+    if (request.method === 'GET' && pathname === '/api/hub/raw') {
+      const modelPath = (url.searchParams.get('path') || '').trim();
+      const trace = () => ({ 'access-control-allow-origin': '*' });
+      if (!RAW_MODEL_PATH_RE.test(modelPath) || modelPath.split('/').some((s) => s === '.' || s === '..')) {
+        return json({ ok: false, error: 'Invalid "path" parameter' }, 400, trace());
+      }
+      const upstream = `https://huggingface.co/${modelPath}`;
+      try {
+        const res = await fetch(upstream);
+        if (!res.ok) {
+          return json({ ok: false, error: `Model file not found (HTTP ${res.status})`, path: modelPath }, 502, trace());
+        }
+        const cl = Number(res.headers.get('content-length') || 0);
+        if (RAW_LARGE_FILE_RE.test(modelPath) || cl >= RAW_MAX_STREAM_BYTES) {
+          return Response.redirect(upstream, 302);
+        }
+        const headers = {
+          'content-type': res.headers.get('content-type') || 'application/octet-stream',
+          'access-control-allow-origin': '*',
+          'cache-control': 'public, max-age=300',
+        };
+        if (cl > 0) headers['content-length'] = String(cl);
+        return new Response(res.body, { status: 200, headers });
+      } catch (err) {
+        return json({ ok: false, error: (err && err.message) ? err.message : 'Upstream unavailable' }, 502, trace());
+      }
     }
 
     if (pathname.startsWith('/api/')) {

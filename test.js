@@ -1399,6 +1399,161 @@ async function runAllTests() {
     }
   });
 
+  await runTest('Worker', '/api/hub/raw streams a small config file CORS-open', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => {
+      seen = String(url);
+      return new Response('{"_name_or_path":"t5-small"}', {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'content-length': '27' }
+      });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=Xenova/t5-small/resolve/main/config.json', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      assertEquals(response.headers.get('content-type'), 'application/json');
+      const body = await response.json();
+      assertEquals(body._name_or_path, 't5-small');
+      assert(seen === 'https://huggingface.co/Xenova/t5-small/resolve/main/config.json', `upstream must be the file URL, got: ${seen}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw redirects large weight blobs back to the direct URL', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('blob', {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream', 'content-length': String(40 * 1024 * 1024) }
+    });
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT/resolve/main/onnx/model_q4.onnx', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 302);
+      assertEquals(response.headers.get('location'), 'https://huggingface.co/justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT/resolve/main/onnx/model_q4.onnx');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw redirects large-suffix weights even when upstream hides content-length (xet case)', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('blob', { status: 200, headers: { 'content-type': 'application/octet-stream' } });
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=google-t5/t5-small/resolve/main/onnx/decoder_model.onnx', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 302);
+      assertEquals(response.headers.get('location'), 'https://huggingface.co/google-t5/t5-small/resolve/main/onnx/decoder_model.onnx');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw streams config.json even when upstream serves it as octet-stream (xet quirk regression)', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('{"model_type":"t5"}', {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream', 'content-length': '18' }
+    });
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=google-t5/t5-small/resolve/main/config.json', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      assertEquals(response.headers.get('content-type'), 'application/octet-stream');
+      const body = await response.json();
+      assertEquals(body.model_type, 't5');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw streams an under-threshold octet-stream (tokenizer model pieces)', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('BINARY', {
+      status: 200,
+      headers: { 'content-type': 'application/octet-stream', 'content-length': '6' }
+    });
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=google-t5/t5-small/resolve/main/spiece.model', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      assertEquals(await response.text(), 'BINARY');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw rejects traversal and malformed paths', async () => {
+    const origFetch = globalThis.fetch;
+    let called = false;
+    globalThis.fetch = async () => { called = true; return new Response('{}', { status: 200 }); };
+    try {
+      for (const bad of [
+        '/api/hub/raw?path=../../etc/passwd',
+        '/api/hub/raw?path=onlyowner',
+        '/api/hub/raw?path=a/b/resolve/main/..%2F..%2Fsecrets',
+        '/api/hub/raw?path=a/b/resolve/main/config.json/../../../x',
+      ]) {
+        const response = await worker.fetch(
+          new Request('https://ai-workspace-pro.example.com' + bad, { method: 'GET' }),
+          {}
+        );
+        assertEquals(response.status, 400, `expected 400 for ${bad}`);
+      }
+      assert(!called, 'the upstream must never be reached for invalid paths');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw answers a readable error when the upstream file is missing', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => new Response('Not Found', { status: 404 });
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=google-t5/t5-small/resolve/main/missing.txt', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 502);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.json();
+      assert(body.ok === false && /HTTP 404/.test(body.error), `expected a readable file-not-found error, got: ${body.error}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hub/raw answers a readable error when the upstream fetch throws', async () => {
+    const origFetch = globalThis.fetch;
+    globalThis.fetch = async () => { throw new Error('socket hang up'); };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=Xenova/t5-small/resolve/main/config.json', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 502);
+      const body = await response.json();
+      assert(body.ok === false && body.error, 'expected a typed upstream error');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
   await runTest('Worker', 'non-api requests are delegated to the ASSETS binding', async () => {
     let served = null;
     const env = {

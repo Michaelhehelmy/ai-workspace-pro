@@ -126,6 +126,19 @@ async function configureEnv(transformers) {
       // leave the browser cache off so transformers.js downloads models per load
       // instead of throwing "Browser cache is not available in this environment."
       env.useBrowserCache = typeof caches !== 'undefined';
+
+      // The deployed Worker proxies Hugging Face model files CORS-open at
+      // /api/hub/raw (see worker/index.js). Point the engine's remote host at
+      // it so config/tokenizer/weight downloads never hit huggingface.co's
+      // redirect chains directly (a redirect target that 404s or drops CORS
+      // headers surfaces in the browser as "Cross-Origin Request Blocked …
+      // Status code: 404"). Large weight blobs are 302-redirected back to Hugging
+      // Face by the proxy and served direct from its LFS/CDN hosts. On bare
+      // static hosting (no Worker) the defaults are kept — direct HF downloads.
+      if (await hasWorkerHubProxy()) {
+        env.remoteHost = window.location.origin;
+        env.remotePathTemplate = '/api/hub/raw?path={model}/resolve/{revision}/';
+      }
     } else {
       const { mkdirSync } = await import('node:fs');
       const { join, dirname } = await import('node:path');
@@ -279,12 +292,23 @@ const _hubCheck = new Map();
 /** True when the model's files are already in browser Cache Storage. */
 async function hubModelCached(modelId) {
   if (typeof caches === 'undefined' || typeof caches.keys !== 'function') return false;
-  const probeUrl = 'https://huggingface.co/' + modelId + '/resolve/main/config.json';
+  // With the Worker present, transformers.js caches files under the proxied
+  // /api/hub/raw key; on bare static hosting it uses the direct HF URL. Probe
+  // whichever applies (both when the Worker is present, cheap and safe).
+  const bases = [];
+  try {
+    if (await hasWorkerHubProxy()) {
+      bases.push(window.location.origin + '/api/hub/raw?path=' + modelId + '/resolve/main/config.json');
+    }
+  } catch (_) {}
+  bases.push('https://huggingface.co/' + modelId + '/resolve/main/config.json');
   try {
     const names = await caches.keys();
     for (const name of names) {
       const cache = await caches.open(name);
-      if (await cache.match(probeUrl)) return true;
+      for (const url of bases) {
+        if (await cache.match(url)) return true;
+      }
     }
   } catch (_) {}
   return false;
