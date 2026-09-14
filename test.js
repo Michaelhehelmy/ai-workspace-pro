@@ -897,6 +897,79 @@ async function runAllTests() {
     }
   });
 
+  await runTest('AgentLoop', 'emits onStep progress and records steps with tool call ids', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const events = [];
+      const loop = await agentLoop({
+        message: 'What is the theme mode?',
+        persona: 'You are a helpful assistant.',
+        runner: async () => ({ text: 'light' }),
+        onStep: (ev) => events.push(ev)
+      });
+      assertEquals(loop.answer, 'The theme mode is light.');
+      assertEquals(loop.iterations, 2);
+      assert(events.length >= 2, 'tool_start + tool_end expected');
+      assertEquals(events[0].type, 'tool_start');
+      assertEquals(events[0].name, 'get_config');
+      assertEquals(events[0].iteration, 0);
+      assertEquals(events[1].type, 'tool_end');
+      assertEquals(events[1].result, 'light');
+      assertEquals(loop.steps.length, 1);
+      assertEquals(loop.steps[0].name, 'get_config');
+      assertEquals(loop.steps[0].result, 'light');
+      assert(loop.steps[0].ok === true, 'step marked ok');
+      assertEquals(loop.toolCalls[0].id, 'call_1', 'backend call id preserved into toolCalls');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('AgentLoop', 'honors the abort signal and reports an interrupted loop', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const ac = new AbortController();
+      const loop = await agentLoop({
+        message: 'What is the theme mode?',
+        persona: 'You are a helpful assistant.',
+        runner: async () => ({ text: 'light' }),
+        onStep: (ev) => { if (ev.type === 'tool_end') ac.abort(); },
+        signal: ac.signal
+      });
+      assertEquals(loop.interrupted, true);
+      assertEquals(loop.iterations, 1);
+      assert(loop.steps.length >= 1, 'steps captured before the abort');
+      assert(loop.steps[0].ok === true, 'completed step flagged ok');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('AgentLoop', 'pre-aborted signal returns interrupted with no work', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const ac = new AbortController();
+      ac.abort();
+      const loop = await agentLoop({
+        message: 'What is the theme mode?',
+        persona: 'You are a helpful assistant.',
+        runner: async () => ({ text: 'light' }),
+        signal: ac.signal
+      });
+      assertEquals(loop.interrupted, true);
+      assertEquals(loop.iterations, 0);
+      assertEquals(loop.steps.length, 0);
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
   // 3d. Skills (Phase 3)
   await runTest('Skills', 'SkillLibrary ships the built-in skills and registers new ones', async () => {
     const lib = new SkillLibrary();
@@ -1711,6 +1784,66 @@ async function runAllTests() {
     assertEquals(response.headers.get('access-control-allow-origin'), '*');
   });
 
+  await runTest('Worker', '/api/ai/chat keeps tool role + tool_calls glue across turns', async () => {
+    let seen = null;
+    const fakeAI = {
+      run: async (model, opts) => { seen = opts; return { response: 'ok' }; }
+    };
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          maxTokens: 100,
+          tools: [{ type: 'function', function: { name: 'get_config', description: 'x', parameters: { type: 'object', properties: {} } } }],
+          messages: [
+            { role: 'user', content: 'What is the theme mode?' },
+            { role: 'assistant', content: null, tool_calls: [{ id: 'abc123456', type: 'function', function: { name: 'get_config', arguments: '{"path":"app.theme.mode"}' } }] },
+            { role: 'tool', tool_call_id: 'abc123456', name: 'get_config', content: 'light' }
+          ]
+        })
+      }),
+      { AI: fakeAI }
+    );
+    assertEquals(response.status, 200);
+    assert(seen && Array.isArray(seen.messages), 'AI.run receives messages');
+    const toolMsg = seen.messages.find(m => m.role === 'tool');
+    assert(toolMsg, 'tool role preserved');
+    assertEquals(toolMsg.tool_call_id, 'abc123456');
+    assertEquals(toolMsg.name, 'get_config');
+    const asstMsg = seen.messages.find(m => m.role === 'assistant');
+    assert(asstMsg && asstMsg.tool_calls && asstMsg.tool_calls.length === 1, 'assistant tool_calls preserved');
+    assertEquals(asstMsg.tool_calls[0].function.name, 'get_config');
+    assert(Array.isArray(seen.tools) && seen.tools.length === 1, 'tools forwarded');
+  });
+
+  await runTest('Worker', '/api/ai/chat remaps invalid tool ids to 9-char Workers-AI ids', async () => {
+    let seen = null;
+    const fakeAI = {
+      run: async (model, opts) => { seen = opts; return { response: 'ok' }; }
+    };
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/ai/chat', {
+        method: 'POST',
+        body: JSON.stringify({
+          maxTokens: 100,
+          tools: [{ type: 'function', function: { name: 'get_config', description: 'x', parameters: { type: 'object', properties: {} } } }],
+          messages: [
+            { role: 'user', content: 'What is the theme mode?' },
+            { role: 'assistant', content: null, tool_calls: [{ id: 'call_too_long_x', type: 'function', function: { name: 'get_config', arguments: '{}' } }] },
+            { role: 'tool', tool_call_id: 'call_too_long_x', name: 'get_config', content: 'light' }
+          ]
+        })
+      }),
+      { AI: fakeAI }
+    );
+    assertEquals(response.status, 200);
+    const asst = seen.messages.find(m => m.role === 'assistant');
+    const tool = seen.messages.find(m => m.role === 'tool');
+    const id = asst.tool_calls[0].id;
+    assert(/^[A-Za-z0-9]{9}$/.test(id), `remapped id conforms, got: ${id}`);
+    assertEquals(tool.tool_call_id, id, 'assistant and tool feedback stay paired');
+  });
+
   await runTest('Worker', 'non-api requests are delegated to the ASSETS binding', async () => {
     let served = null;
     const env = {
@@ -2391,6 +2524,50 @@ async function runAllTests() {
     assertEquals(res.params && res.params.targetAgentId, 'marcus');
   });
 
+  await runTest('Pipeline', 'agent mode on drives the loop and reports steps', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const res = await runPipeline('What is the theme mode?', {
+        state,
+        router: agentComm,
+        runner: async (tool, params) => ({ text: 'light' }),
+        agent: { enabled: true }
+      });
+      assertEquals(res.ok, true);
+      assertEquals(res.intent, 'agent_loop');
+      assert(res.metrics.model.loop === true, 'loop metrics present');
+      assertEquals(res.result.steps.length, 1);
+      assertEquals(res.response, 'The theme mode is light.');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
+  await runTest('Pipeline', 'agent mode interrupted surfaces E_AGENT_STOPPED', async () => {
+    fakeAgentBackend.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-agent';
+      const ac = new AbortController();
+      ac.abort();
+      const res = await runPipeline('What is the theme mode?', {
+        state,
+        router: agentComm,
+        runner: async (tool, params) => ({ text: 'light' }),
+        agent: { enabled: true, signal: ac.signal }
+      });
+      assertEquals(res.ok, true);
+      assertEquals(res.intent, 'agent_loop');
+      assertEquals(res.response, null);
+      assert(res.warning && res.warning.code === 'E_AGENT_STOPPED', 'interrupt warning surfaced');
+      assert(res.metrics.model.interrupted === true, 'interrupted metric set');
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
   await runTest('Pipeline', 'rankTools direct call returns empty array when models disabled', async () => {
     const ranks = await rankTools('check my todos', state);
     assert(Array.isArray(ranks) && ranks.length === 0, 'disabled models → empty rankTools');
@@ -2679,6 +2856,43 @@ async function runAllTests() {
         for await (const c of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'yes' }], tools: [{ name: 'f' }] })) chunks.push(c);
         assertEquals(chunks.length, 1);
         assertEquals(chunks[0].toolCall.function.name, 'f');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate forwards tool role + tool_calls glue for multi-turn', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        const enc = new TextEncoder();
+        let posted = null;
+        globalThis.fetch = async (url, opts) => {
+          posted = JSON.parse(opts.body);
+          return {
+            ok: true,
+            body: new ReadableStream({ start(c) { c.enqueue(enc.encode('{"text":"ok"}\n')); c.close(); } })
+          };
+        };
+        const chunks = [];
+        for await (const c of getBackend('cfai').generate({
+          messages: [
+            { role: 'user', content: 'hi' },
+            { role: 'assistant', content: null, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'get_config', arguments: '{}' } }] },
+            { role: 'tool', tool_call_id: 'c1', name: 'get_config', content: 'light' }
+          ]
+        })) chunks.push(c);
+        assertEquals(chunks.length, 1);
+        assert(posted, 'request body captured');
+        const toolMsg = posted.messages.find(m => m.role === 'tool');
+        assert(toolMsg, 'tool role forwarded');
+        assertEquals(toolMsg.tool_call_id, 'c1');
+        assertEquals(toolMsg.name, 'get_config');
+        const asst = posted.messages.find(m => m.role === 'assistant');
+        assert(asst.tool_calls && asst.tool_calls.length === 1, 'assistant tool_calls forwarded');
+        assertEquals(asst.tool_calls[0].id, 'c1');
       } finally {
         state.config.app.ai.backends.cfai = origCfa;
         globalThis.fetch = origFetch;

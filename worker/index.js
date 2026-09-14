@@ -63,7 +63,7 @@ const CORS_HEAD = { 'access-control-allow-origin': '*' };
 const CF_DIALOG_MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const CF_EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const CF_EMBED_MAX_CHARS = 4096;
-const CF_ALLOWED_ROLES = new Set(['system', 'user', 'assistant']);
+const CF_ALLOWED_ROLES = new Set(['system', 'user', 'assistant', 'tool']);
 
 function hasAiBinding(env) {
   return !!env && typeof env.AI === 'object' && env.AI !== null;
@@ -80,16 +80,53 @@ function ndjson(lines, status = 200, extra = {}) {
   });
 }
 
-// Coerce a request-body messages array into the strict { role, content } shape
-// Workers AI expects, dropping empty entries. Returns null when nothing usable.
+// Coerce a request-body messages array into the shape Workers AI expects,
+// dropping empty entries. Tool feedback keeps its name/tool_call_id and the
+// assistant message keeps its tool_calls array so multi-turn tool use works.
+// Workers AI enforces tool ids as exactly [a-z0-9] (9 chars); non-conforming
+// ids are remapped deterministically so assistant tool_calls and their tool
+// role feedback stay paired.
+const CF_TOOL_ID_RE = /^[A-Za-z0-9]{9}$/;
+let cfToolIdCounter = 0;
+function freshToolId() {
+  cfToolIdCounter += 1;
+  return (Date.now().toString(36) + cfToolIdCounter.toString(36)).slice(-9).padStart(9, '0');
+}
+const cfToolIdOk = (id) => typeof id === 'string' && CF_TOOL_ID_RE.test(id);
+
 function sanitizeMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   const clean = [];
+  const idMap = new Map();
+  const remapId = (id) => {
+    if (cfToolIdOk(id)) return id;
+    if (!idMap.has(id)) idMap.set(id, freshToolId());
+    return idMap.get(id);
+  };
   for (const m of messages) {
     if (!m || typeof m !== 'object') continue;
     const role = CF_ALLOWED_ROLES.has(m.role) ? m.role : 'user';
-    const content = typeof m.content === 'string' ? m.content : '';
-    clean.push({ role, content });
+    const entry = { role, content: typeof m.content === 'string' ? m.content : '' };
+    if (role === 'tool') {
+      if (typeof m.name === 'string' && m.name) entry.name = m.name;
+      if (typeof m.tool_call_id === 'string' && m.tool_call_id) entry.tool_call_id = remapId(m.tool_call_id);
+    }
+    if (role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      entry.tool_calls = m.tool_calls
+        .filter(tc => tc && typeof tc === 'object' && tc.function && tc.function.name)
+        .map(tc => ({
+          id: remapId(tc.id),
+          type: 'function',
+          function: {
+            name: String(tc.function.name),
+            arguments: typeof tc.function.arguments === 'string'
+              ? tc.function.arguments
+              : JSON.stringify(tc.function.arguments || {})
+          }
+        }));
+      if (!entry.tool_calls.length) delete entry.tool_calls;
+    }
+    clean.push(entry);
   }
   return clean.length ? clean : null;
 }

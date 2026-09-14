@@ -301,6 +301,7 @@ export function setBusy(value) {
   setCharacterEmotion(value ? 'thinking' : 'neutral');
   if (value) showTypingIndicator();
   else hideTypingIndicator();
+  refreshAgentControls();
 }
 
 // Map a pipeline result to a conversational emoji.
@@ -369,6 +370,44 @@ export function registerSendHandler(handler) {
       }
     });
   }
+}
+
+// ── Agent mode controls (Phase C) ───────────────────────────────────────────
+let agentStopHandler = null;
+
+export function agentModeEnabled() {
+  if (!isBrowser) return false;
+  const t = document.getElementById('agentModeToggle');
+  return !!t && t.checked;
+}
+
+export function agentVerbosity() {
+  if (!isBrowser) return 'details';
+  const s = document.getElementById('agentVerbosity');
+  return s ? s.value : 'details';
+}
+
+// Render one intermediate agent step as an interstitial system message (never
+// persisted to chat history or across sessions).
+export function appendAgentStep(html) {
+  appendChatMessage('system', html, {});
+}
+
+// Show the Stop button while an agent run is busy, and lock the toggle so the
+// mode can't change mid-run.
+export function refreshAgentControls() {
+  if (!isBrowser) return;
+  const stop = document.getElementById('agentStopBtn');
+  if (stop) stop.classList.toggle('d-none', !busy || !agentModeEnabled());
+  const t = document.getElementById('agentModeToggle');
+  if (t) t.disabled = busy;
+}
+
+export function registerAgentStop(handler) {
+  agentStopHandler = handler;
+  if (!isBrowser) return;
+  const stop = document.getElementById('agentStopBtn');
+  if (stop) stop.addEventListener('click', () => { if (typeof agentStopHandler === 'function') agentStopHandler(); });
 }
 
 // ── Voice input ─────────────────────────────────────────────────────────────

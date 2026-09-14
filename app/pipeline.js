@@ -398,14 +398,22 @@ export async function runPipeline(message, opts = {}) {
   const metrics = { model: {}, rules: {} };
   const started = Date.now();
 
-  // 0. Tool-calling agent loop — activates only when the resolved dialog backend
-  //    supports tools (e.g. Ollama). Falls back silently to the single-shot
-  //    pipeline below when no tool-capable backend is configured/reachable.
-  if (runner) {
+  // 0. Agent mode (Phase C): when the user opted in (opts.agent.enabled), drive
+  //    the tool-calling loop explicitly — streaming each tool step via onStep,
+  //    honoring the AbortSignal for the Stop button. Falls back silently to the
+  //    single-shot pipeline below when agent mode is off or no tool-capable
+  //    backend is configured/reachable.
+  const agent = opts.agent || null;
+  if (runner && agent && agent.enabled === true) {
     const loop = await agentLoop({
       message,
       persona: opts.persona,
       maxTokens: opts.maxTokens,
+      maxIterations: (typeof agent.maxIterations === 'number' && agent.maxIterations > 0)
+        ? agent.maxIterations
+        : 5,
+      signal: agent.signal,
+      onStep: agent.onStep,
       runner,
       query: message,
       stateInstance
@@ -414,6 +422,27 @@ export async function runPipeline(message, opts = {}) {
       if (loop.error) {
         // Model failure → fall through to the single-shot path (honest failure handling)
         metrics.model.loopError = loop.error;
+      } else if (loop.interrupted) {
+        return {
+          ok: true,
+          intent: 'agent_loop',
+          confidence: 1,
+          derivedIntent: 'agent_loop',
+          params: {},
+          result: { text: null, steps: loop.steps, interrupted: true },
+          response: null,
+          error: null,
+          warning: {
+            code: 'E_AGENT_STOPPED',
+            message: `Agent stopped after ${loop.iterations} turn${loop.iterations === 1 ? '' : 's'}.`
+          },
+          metrics: {
+            model: { loop: true, interrupted: true, iterations: loop.iterations, toolCalls: loop.toolCalls.length },
+            rules: {},
+            elapsed: Date.now() - started
+          },
+          sources: { intent: 'model', entities: 'rules', agent: 'rules' }
+        };
       } else if (loop.answer) {
         return {
           ok: true,
@@ -421,11 +450,14 @@ export async function runPipeline(message, opts = {}) {
           confidence: 1,
           derivedIntent: 'agent_loop',
           params: {},
-          result: { text: loop.answer },
+          result: { text: loop.answer, steps: loop.steps, iterations: loop.iterations },
           response: loop.answer,
           error: null,
           warning: null,
-          metrics: { model: { loop: true, iterations: loop.iterations, toolCalls: loop.toolCalls.length }, rules: {}, elapsed: Date.now() - started },
+          metrics: {
+            model: { loop: true, iterations: loop.iterations, toolCalls: loop.toolCalls.length },
+            rules: {}, elapsed: Date.now() - started
+          },
           sources: { intent: 'model', entities: 'rules', agent: 'rules' }
         };
       }

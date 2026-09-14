@@ -190,6 +190,21 @@
               <i class="bi bi-send-fill" id="sendIcon"></i> <span id="sendLabel">Send</span>
             </button>
           </div>
+          <div class="d-flex flex-wrap align-items-center gap-3 mt-1 px-1 agent-toolbar">
+            <div class="form-check form-switch mb-0">
+              <input class="form-check-input" type="checkbox" id="agentModeToggle" role="switch">
+              <label class="form-check-label small" for="agentModeToggle" title="Run the multi-step tool-calling loop instead of the single-shot pipeline"><i class="bi bi-robot"></i> Agent mode</label>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+              <label class="form-label small fw-semibold mb-0" for="agentVerbosity">Steps</label>
+              <select class="form-select form-select-sm w-auto" id="agentVerbosity" title="How much of the tool loop to show while it runs">
+                <option value="hidden">Hidden</option>
+                <option value="summary">Summary</option>
+                <option value="details" selected>Details</option>
+              </select>
+            </div>
+            <button class="btn btn-sm btn-outline-danger d-none" id="agentStopBtn" type="button"><i class="bi bi-stop-fill"></i> Stop</button>
+          </div>
           <div class="d-flex justify-content-between align-items-center mt-1 px-1 composer-meta">
             <span class="opacity-75 d-none d-md-inline"><kbd>Enter</kbd> send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line</span>
             <span class="opacity-75" id="chatComposerHint"></span>

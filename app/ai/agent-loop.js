@@ -58,9 +58,17 @@ function normalizeToolCall(tc) {
 /**
  * Run the multi-turn agent loop.
  *
+ * `onStep` (optional) is invoked as the loop works so callers can render
+ * intermediate progress: `{ type: 'tool_start', name, args, iteration }` then
+ * `{ type: 'tool_end', name, result, iteration, ok }`.
+ *
+ * `signal` (optional): when aborted the loop stops cleanly at the next
+ * iteration boundary and returns `{ interrupted: true, ... }`.
+ *
  * Returns:
  *   null            — no tool-capable backend → caller falls back to single-shot
- *   { answer, text, iterations, toolCalls: [...] } — completed agent conversation
+ *   { answer, text, iterations, toolCalls, steps } — completed agent conversation
+ *   { interrupted, iterations, toolCalls, steps }  — stopped via `signal`
  *   { error }       — model/inference failure, caller decides how to handle
  */
 export async function agentLoop({
@@ -72,12 +80,16 @@ export async function agentLoop({
   query = message,
   stateInstance = state,
   systemPrompt,
-  tools
+  tools,
+  onStep,
+  signal
 } = {}) {
   if (typeof runner !== 'function') return null;
 
   const backend = resolveBackendForStage('dialog');
   if (!backend || backend.id === 'transformers' || backend.canTools !== true) return null;
+
+  const halted = () => !!(signal && signal.aborted);
 
   // Identity-first system prompt built from the active character (name, persona,
   // workspace, matching skill directives) so the model can answer "what is your
@@ -105,6 +117,7 @@ export async function agentLoop({
 
   const messages = [];
   const allToolCalls = [];
+  const steps = [];
 
   // Turn 0 — seed recent conversation so the model has memory, then the task.
   const history = (stateInstance.chatHistory || []).slice(-8);
@@ -121,6 +134,8 @@ export async function agentLoop({
   let answer = null;
 
   for (let iteration = 0; iteration < maxIterations; iteration++) {
+    if (halted()) return { interrupted: true, iterations: iteration, toolCalls: allToolCalls, steps };
+
     const toolCalls = [];
     const textChunks = [];
 
@@ -133,7 +148,10 @@ export async function agentLoop({
       })) {
         if (chunk && chunk.toolCall) {
           const tc = normalizeToolCall(chunk.toolCall);
-          if (tc) toolCalls.push(tc);
+          if (tc) {
+            tc.id = (chunk.toolCall && chunk.toolCall.id) || `call_${iteration}_${toolCalls.length}`;
+            toolCalls.push(tc);
+          }
         } else if (chunk && chunk.text) {
           textChunks.push(chunk.text);
         }
@@ -149,33 +167,46 @@ export async function agentLoop({
     if (!toolCalls.length) {
       const text = textChunks.join('').trim();
       answer = text.length >= 3 ? text : null;
-      return { answer, text, iterations: iteration + 1, toolCalls: allToolCalls };
+      return { answer, text, iterations: iteration + 1, toolCalls: allToolCalls, steps };
     }
 
     // Execute each tool call and feed the result back into the conversation.
     const assistantContent = textChunks.join('').trim();
     const assistantMsg = { role: 'assistant', content: assistantContent || null };
-    if (allToolCalls.length) {
-      // Preserve prior tool-call rounds as structured entries
-      assistantMsg.tool_calls = allToolCalls;
+    if (toolCalls.length) {
+      assistantMsg.tool_calls = toolCalls.map(tc => ({
+        id: tc.id,
+        type: 'function',
+        function: { name: tc.name, arguments: JSON.stringify(tc.args) }
+      }));
     }
     messages.push(assistantMsg);
 
     for (const tc of toolCalls) {
-      allToolCalls.push({ name: tc.name, args: tc.args });
+      allToolCalls.push({ name: tc.name, args: tc.args, id: tc.id, iteration });
+      if (typeof onStep === 'function') {
+        onStep({ type: 'tool_start', name: tc.name, args: tc.args, iteration });
+      }
       let result;
+      let ok = true;
       try {
         result = await runner(tc.name, { ...tc.args, query: query || message });
       } catch (err) {
+        ok = false;
         result = { text: `⚠️ ${err.message}` };
       }
       const resultText = (result && typeof result === 'object' && (result.text || result.error))
         ? (result.text || result.error)
         : (typeof result === 'string' ? result : JSON.stringify(result || {}));
-      messages.push({ role: 'tool', name: tc.name, content: String(resultText).slice(0, 4000) });
+      const content = String(resultText).slice(0, 4000);
+      steps.push({ name: tc.name, args: tc.args, result: content, iteration, ok });
+      if (typeof onStep === 'function') {
+        onStep({ type: 'tool_end', name: tc.name, result: content, iteration, ok });
+      }
+      messages.push({ role: 'tool', tool_call_id: tc.id, name: tc.name, content });
     }
   }
 
   // Ran out of iterations without a natural-language answer.
-  return { answer: null, text: null, iterations: maxIterations, toolCalls: allToolCalls };
+  return { answer: null, text: null, iterations: maxIterations, toolCalls: allToolCalls, steps };
 }

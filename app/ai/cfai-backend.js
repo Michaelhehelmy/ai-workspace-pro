@@ -93,12 +93,17 @@ async function* generate(req = {}) {
   const payload = { messages: [], max_tokens: req.maxTokens || 512 };
   if (system) payload.messages.push({ role: 'system', content: system });
   for (const m of messages) {
-    if (m && typeof m === 'object') {
-      payload.messages.push({
-        role: (m.role === 'system' || m.role === 'assistant' || m.role === 'user') ? m.role : 'user',
-        content: typeof m.content === 'string' ? m.content : ''
-      });
+    if (!m || typeof m !== 'object') continue;
+    const role = (m.role === 'system' || m.role === 'assistant' || m.role === 'user' || m.role === 'tool') ? m.role : 'user';
+    const entry = { role, content: typeof m.content === 'string' ? m.content : '' };
+    // Multi-turn tool use: tool results keep their name/tool_call_id and the
+    // assistant message keeps the tool_calls array it is responding to.
+    if (role === 'tool') {
+      if (typeof m.name === 'string' && m.name) entry.name = m.name;
+      if (typeof m.tool_call_id === 'string' && m.tool_call_id) entry.tool_call_id = m.tool_call_id;
     }
+    if (role === 'assistant' && Array.isArray(m.tool_calls)) entry.tool_calls = m.tool_calls;
+    payload.messages.push(entry);
   }
   if (!payload.messages.length) return;
 

@@ -171,10 +171,21 @@ export {
   buildCoderSystemPrompt
 };
 
+// Abort controller for an in-flight agent run (Stop button). Cleared when the
+// handler settles so a stale abort never cancels a later request.
+let activeAgentController = null;
+
 if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
   init().then(() => {
     const uiPromise = import('./app/ui.js');
     uiPromise.then(async ui => {
+      ui.registerAgentStop(() => {
+        // Mid-agent-run Stop: abort the loop's AbortController; the loop calls
+        // a halt at the next iteration boundary and reports an interrupted run.
+        if (activeAgentController && !activeAgentController.signal.aborted) {
+          activeAgentController.abort();
+        }
+      });
       ui.registerSendHandler(async (text) => {
         // The busy/typing lifecycle is owned by ui.sendMessage's setBusy().
         // Real-model pipeline: data tools succeed honestly; chat-only paths
@@ -182,10 +193,56 @@ if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
         const runner = (tool, params) => executeTool(tool, params, state);
         let res = null;
         let fatal = null;
+        const opts = { state, router: agentComm, runner };
+
+        // Agent mode (Phase C): opt-in multi-turn tool loop with live progress,
+        // a verbosity knob, and a Stop button backed by an AbortController.
+        if (ui.agentModeEnabled()) {
+          const verbosity = ui.agentVerbosity();
+          const controller = new AbortController();
+          activeAgentController = controller;
+          ui.refreshAgentControls();
+          const snippet = (s) => {
+            const t = String(s || '');
+            return t.length > 110 ? t.slice(0, 107) + '…' : t;
+          };
+          opts.agent = {
+            enabled: true,
+            signal: controller.signal,
+            maxIterations: 5,
+            onStep: (step) => {
+              if (!step || typeof step !== 'object') return;
+              if (step.type === 'tool_start') {
+                if (verbosity === 'details') {
+                  let argsText = '';
+                  try { argsText = JSON.stringify(step.args || {}); } catch (_) {}
+                  ui.appendAgentStep(
+                    `<span class="text-body-secondary">Agent · turn ${Number(step.iteration) + 1} —</span> ` +
+                    `<strong>${escapeHtml(String(step.name))}</strong>` +
+                    (argsText && argsText !== '{}' ? ` <span class="text-body-secondary">${escapeHtml(snippet(argsText))}</span>` : '')
+                  );
+                }
+              } else if (step.type === 'tool_end') {
+                if (verbosity === 'details' || verbosity === 'summary') {
+                  const ok = step.ok !== false;
+                  const rl = snippet(String(step.result || ''));
+                  ui.appendAgentStep(
+                    `<span class="${ok ? 'text-success' : 'text-danger'}">${ok ? '✔' : '✖'} ${escapeHtml(String(step.name))}</span>` +
+                    (verbosity === 'details' ? ` <span class="text-body-secondary">→ ${escapeHtml(rl)}</span>` : '')
+                  );
+                }
+              }
+            }
+          };
+        }
+
         try {
-          res = await runPipeline(text, { state, router: agentComm, runner });
+          res = await runPipeline(text, opts);
         } catch (err) {
           fatal = err;
+        } finally {
+          activeAgentController = null;
+          ui.refreshAgentControls();
         }
 
         const char = getActiveCharacter(state);
@@ -198,14 +255,16 @@ if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
         }
         if (res && res.ok) {
           if (res.warning) ui.appendChatMessage('system', formatModelError(res.warning), { ts, persist: true });
-          ui.appendChatMessage('assistant', res.response, {
-            name: char.name,
-            emotion: ui.emotionFor(res),
-            animate: true,
-            ts,
-            persist: true
-          });
-          if (res.response) ui.maybeReadAloud(res.response);
+          if (res.response) {
+            ui.appendChatMessage('assistant', res.response, {
+              name: char.name,
+              emotion: ui.emotionFor(res),
+              animate: true,
+              ts,
+              persist: true
+            });
+            ui.maybeReadAloud(res.response);
+          }
         } else {
           if (res && res.error) ui.appendChatMessage('system', formatModelError(res.error), { ts, persist: true });
           if (res && res.response) ui.appendChatMessage('assistant', res.response, {
