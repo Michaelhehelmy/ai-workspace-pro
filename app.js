@@ -255,15 +255,20 @@ if (isBrowser && !window.__DISABLE_AUTO_INIT__) {
         }
         if (res && res.ok) {
           if (res.warning) ui.appendChatMessage('system', formatModelError(res.warning), { ts, persist: true });
-          if (res.response) {
-            ui.appendChatMessage('assistant', res.response, {
+          const reply = String(res.response || '').trim();
+          if (reply) {
+            ui.appendChatMessage('assistant', reply, {
               name: char.name,
               emotion: ui.emotionFor(res),
               animate: true,
               ts,
               persist: true
             });
-            ui.maybeReadAloud(res.response);
+            ui.maybeReadAloud(reply);
+          } else {
+            // Verified live: the dialog model occasionally returns a blank
+            // reply. Never stay silent — surface an honest, actionable note.
+            ui.appendChatMessage('system', '⚠️ The model returned an empty reply. Try rephrasing, or switch the dialog model in Settings.', { ts, persist: true });
           }
         } else {
           if (res && res.error) ui.appendChatMessage('system', formatModelError(res.error), { ts, persist: true });

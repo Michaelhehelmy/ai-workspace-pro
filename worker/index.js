@@ -49,8 +49,7 @@ const HF_REVISION_RE = /^(main|[0-9a-f]{40}|[A-Za-z0-9._-]+)$/;
 // upstream content-type/content-length is not trustworthy (Hugging Face serves
 // even JSON as application/octet-stream over its xet/CDN path, sometimes without
 // a content-length).
-const RAW_MAX_STREAM_BYTES = 8 * 1024 * 1024;
-const RAW_LARGE_FILE_RE = /\.(?:safetensors|onnx|onnx_data|bin|pt|pth|msgpack|gguf|ggml|h5|tflite|npy)\b/i;
+
 
 // ── Cloudflare AI (Workers AI) — Phase A ────────────────────────────────────
 // The SPA talks to the Workers AI binding through these keyless endpoints; the
@@ -302,16 +301,15 @@ export default {
     }
 
     // Server-side model-file proxy for the Transformers.js runtime. The on-device
-    // engine downloads config/tokenizer/weights directly from
-    // huggingface.co/[model]/resolve/[revision]/[file]; Hugging Face answers with
-    // redirects (resolve-cache, CDN), and a redirect target that 404s or lacks
-    // CORS headers surfaces in the browser as confusing "Cross-Origin Request
-    // Blocked … Status code: 404" errors. Routing the same-origin Worker lets us
-    // (a) follow the redirect chain server-side, (b) re-serve small files CORS-open
-    // with a stable cache key, and (c) answer a readable JSON error on failure.
-    // Large weight blobs are 302-redirected back to the direct URL (see
-    // RAW_MAX_STREAM_BYTES); they are served by LFS/CDN hosts that already send
-    // `access-control-allow-origin: *`, so the browser can fetch them directly.
+    // engine downloads config/tokenizer/weights from
+    // huggingface.co/[model]/resolve/[revision]/[file]. Routing the same-origin
+    // Worker lets us (a) follow the redirect chain server-side, (b) re-serve the
+    // bytes CORS-open with a stable cache key, and (c) answer a readable JSON
+    // error on failure. Every file — including large weight blobs — is streamed
+    // through the Worker rather than 302-redirected, because a browser redirect
+    // lands on a huggingface.co/CDN URL that fails the CORS preflight on a
+    // cross-origin page (verified live: default ONNX model downloads were being
+    // blocked and the whole model-gated pipeline degraded).
     if (request.method === 'GET' && pathname === '/api/hub/raw') {
       const modelPath = (url.searchParams.get('path') || '').trim();
       const trace = () => ({ 'access-control-allow-origin': '*' });
@@ -325,9 +323,6 @@ export default {
           return json({ ok: false, error: `Model file not found (HTTP ${res.status})`, path: modelPath }, 502, trace());
         }
         const cl = Number(res.headers.get('content-length') || 0);
-        if (RAW_LARGE_FILE_RE.test(modelPath) || cl >= RAW_MAX_STREAM_BYTES) {
-          return Response.redirect(upstream, 302);
-        }
         const headers = {
           'content-type': res.headers.get('content-type') || 'application/octet-stream',
           'access-control-allow-origin': '*',

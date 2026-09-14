@@ -87,6 +87,17 @@ async function embed(text, modelOverride) {
   }
 }
 
+// Watchdog so a hung /api/ai/chat stream can never leave the composer stuck
+// in the "Thinking…" busy state forever (verified live: the Worker occasionally
+// stalls without emitting a single byte). The pipeline then settles with an
+// honest E_TIMEOUT and the send lifecycle releases itself.
+const REQUEST_TIMEOUT_MS = 90000;
+
+function timeoutMs() {
+  const n = Number(getConfig().timeoutMs);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, 300000) : REQUEST_TIMEOUT_MS;
+}
+
 async function* generate(req = {}) {
   const system = typeof req.system === 'string' ? req.system : '';
   const messages = Array.isArray(req.messages) ? req.messages : [];
@@ -130,14 +141,16 @@ async function* generate(req = {}) {
     res = await fetch(apiUrl('chat'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(timeoutMs())
     });
   } catch (err) {
     markBackendFailed('cfai', `transport failed: ${err.message}`);
+    const aborted = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
     throw new ModelError(
-      'E_INFER', 'dialog',
-      `Cloudflare AI unreachable: ${err.message}`,
-      'Host the app on the Worker (worker/index.js) so /api/ai/chat exists.'
+      aborted ? 'E_TIMEOUT' : 'E_INFER', 'dialog',
+      aborted ? `Cloudflare AI did not respond within ${Math.round(timeoutMs() / 1000)}s — the Worker may be busy or cold-started. Try again.` : `Cloudflare AI unreachable: ${err.message}`,
+      aborted ? 'Give it a moment and resend, or switch the dialog model in Settings.' : 'Host the app on the Worker (worker/index.js) so /api/ai/chat exists.'
     );
   }
 
@@ -163,7 +176,12 @@ async function* generate(req = {}) {
     await streamNDJSON(res, handleLine);
   } catch (err) {
     if (err instanceof ModelError) throw err;
-    throw new ModelError('E_INFER', 'dialog', `Cloudflare AI stream failed: ${err.message}`);
+    const aborted = err && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    throw new ModelError(
+      aborted ? 'E_TIMEOUT' : 'E_INFER', 'dialog',
+      aborted ? `Cloudflare AI stream stalled for ${Math.round(timeoutMs() / 1000)}s — the Worker may be busy. Try again.` : `Cloudflare AI stream failed: ${err.message}`,
+      aborted ? 'Give it a moment and resend, or switch the dialog model in Settings.' : 'Check the Worker /api/ai/chat logs.'
+    );
   }
 
   for (const t of chunks) yield { text: t };

@@ -279,6 +279,11 @@ export function hideTypingIndicator() {
 
 let busy = false;
 
+// Safety valve: a stalled pipeline (hung server stream, backend deadlock) must
+// never leave the composer permanently spinning. Mirrors the cfai request
+// timeout so local and cloud paths are both covered.
+export const SEND_WATCHDOG_MS = 120000;
+
 export function isBusy() { return busy; }
 
 export function setBusy(value) {
@@ -343,10 +348,19 @@ export function sendMessage(text) {
   if (input) { input.value = ''; autoResize(input); }
   appendChatMessage('user', text, { name: 'You' });
   setBusy(true);
+  let settled = false;
+  const release = () => { if (!settled) { settled = true; setBusy(false); } };
+  // Watchdog: if the pipeline never settles (hung Worker/stream, backend stall),
+  // force-release the composer so the app is never left permanently "Thinking…".
+  const watchdog = setTimeout(() => {
+    if (settled) return;
+    release();
+    appendChatMessage('system', '⏱️ That request is taking very long — the server may still finish it, but you can keep chatting.', { persist: true });
+  }, SEND_WATCHDOG_MS);
   Promise.resolve()
     .then(() => sendHandler(text.trim()))
     .catch(err => appendChatMessage('system', 'Something went wrong: ' + (err && err.message ? err.message : String(err))))
-    .finally(() => setBusy(false));
+    .finally(() => { clearTimeout(watchdog); release(); });
 }
 
 export function registerSendHandler(handler) {

@@ -443,7 +443,7 @@ export async function runPipeline(message, opts = {}) {
           },
           sources: { intent: 'model', entities: 'rules', agent: 'rules' }
         };
-      } else if (loop.answer) {
+      } else if (typeof loop.answer === 'string' && loop.answer.trim()) {
         return {
           ok: true,
           intent: 'agent_loop',
@@ -571,7 +571,11 @@ export async function runPipeline(message, opts = {}) {
   } else if (result) {
     // A real data operation succeeded → its text is the honest fallback.
     try {
-      response = await generateResponse({ intent: intentFinal, message, result, params, persona });
+      const generated = await generateResponse({ intent: intentFinal, message, result, params, persona });
+      // Model replies that come back empty/whitespace must never clear the
+      // data result: surface the honest data text instead (verified live —
+      // mistral occasionally returns a blank final response).
+      response = (generated && String(generated).trim()) ? generated : (result.text || null);
     } catch (err) {
       if (err instanceof ModelError) {
         warning = { code: err.code, stage: err.stage, model: err.model, message: err.message, fix: err.fix };

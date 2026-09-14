@@ -831,6 +831,21 @@ async function runAllTests() {
     return { backend, reset: () => { calls = 0; } };
   })();
 
+  const fakeBlankDialog = (() => {
+    let calls = 0;
+    const backend = createBackend({
+      id: 'fake-blank-dialog',
+      label: 'Fake Blank Dialog',
+      kind: 'fake',
+      canTools: false,
+      async health() { return { ok: true, detail: 'ok' }; },
+      async embed() { return null; },
+      async *generate() { calls += 1; yield { text: '' }; }
+    });
+    registerBackend(backend);
+    return { backend, reset: () => { calls = 0; } };
+  })();
+
   await runTest('AgentLoop', 'routes through agent loop when backend canTools and returns tool result', async () => {
     fakeAgentBackend.reset();
     const originalRouting = state.config.app.ai.routing.dialog;
@@ -1513,7 +1528,7 @@ async function runAllTests() {
     }
   });
 
-  await runTest('Worker', '/api/hub/raw redirects large weight blobs back to the direct URL', async () => {
+  await runTest('Worker', '/api/hub/raw streams large weight blobs CORS-open', async () => {
     const origFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response('blob', {
       status: 200,
@@ -1524,14 +1539,16 @@ async function runAllTests() {
         new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT/resolve/main/onnx/model_q4.onnx', { method: 'GET' }),
         {}
       );
-      assertEquals(response.status, 302);
-      assertEquals(response.headers.get('location'), 'https://huggingface.co/justinthelaw/Qwen2.5-0.5B-Instruct-Resume-Cover-Letter-SFT/resolve/main/onnx/model_q4.onnx');
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.text();
+      assertEquals(body, 'blob');
     } finally {
       globalThis.fetch = origFetch;
     }
   });
 
-  await runTest('Worker', '/api/hub/raw redirects large-suffix weights even when upstream hides content-length (xet case)', async () => {
+  await runTest('Worker', '/api/hub/raw streams large-suffix weights CORS-open even when upstream hides content-length (xet case)', async () => {
     const origFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response('blob', { status: 200, headers: { 'content-type': 'application/octet-stream' } });
     try {
@@ -1539,8 +1556,10 @@ async function runAllTests() {
         new Request('https://ai-workspace-pro.example.com/api/hub/raw?path=google-t5/t5-small/resolve/main/onnx/decoder_model.onnx', { method: 'GET' }),
         {}
       );
-      assertEquals(response.status, 302);
-      assertEquals(response.headers.get('location'), 'https://huggingface.co/google-t5/t5-small/resolve/main/onnx/decoder_model.onnx');
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.text();
+      assertEquals(body, 'blob');
     } finally {
       globalThis.fetch = origFetch;
     }
@@ -2566,6 +2585,25 @@ async function runAllTests() {
     }
   });
 
+  await runTest('Pipeline', 'blank dialog reply still surfaces the honest data text', async () => {
+    fakeBlankDialog.reset();
+    const originalRouting = state.config.app.ai.routing.dialog;
+    try {
+      state.config.app.ai.routing.dialog = 'fake-blank-dialog';
+      const res = await runPipeline('list todos', {
+        state,
+        router: agentComm,
+        runner: async (tool, params) => ({ text: 'light' })
+      });
+      assertEquals(res.ok, true);
+      assertEquals(res.intent, 'list_todos');
+      assertEquals(res.response, 'light');
+      assert(res.warning && (res.warning.code === 'E_INFER' || res.warning.code === 'E_DISABLED'), 'degenerate dialog surfaced as typed warning; got code=' + (res.warning && res.warning.code));
+    } finally {
+      state.config.app.ai.routing.dialog = originalRouting;
+    }
+  });
+
   await runTest('Pipeline', 'agent mode interrupted surfaces E_AGENT_STOPPED', async () => {
     fakeAgentBackend.reset();
     const originalRouting = state.config.app.ai.routing.dialog;
@@ -2962,6 +3000,37 @@ async function runAllTests() {
       const chunks = [];
       for await (const c of getBackend('cfai').generate({ messages: [] })) chunks.push(c);
       assertEquals(chunks.length, 0);
+    });
+
+    await runTest('BackendMock', 'cfai generate throws E_TIMEOUT so a hung /api/ai/chat can never wedge the composer', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true, timeoutMs: 40 };
+        let signal = null;
+        globalThis.fetch = (url, opts) => new Promise((resolve, reject) => {
+          signal = opts && opts.signal;
+          const ka = setInterval(() => {}, 1e9);
+          signal && signal.addEventListener('abort', () => {
+            clearInterval(ka);
+            const err = new Error('The operation was aborted due to timeout');
+            err.name = 'TimeoutError';
+            reject(err);
+          });
+        });
+        let threw = null;
+        try {
+          for await (const _ of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'x' }] })) {}
+        } catch (e) { threw = e; }
+        assert(threw instanceof ModelError, 'ModelError');
+        assertEquals(threw.code, 'E_TIMEOUT');
+        assert(/did not respond/.test(threw.message), 'timeout detail surfaced: ' + threw.message);
+        assert(signal, 'request carried an AbortSignal');
+      } catch (e) { throw e; }
+      finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
     });
 
     await runTest('BackendMock', 'cfai failures mark the backend so auto skips it within TTL', async () => {
