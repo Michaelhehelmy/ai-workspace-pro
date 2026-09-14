@@ -6,7 +6,7 @@
   "defaultCharacter": "aria",
   "defaultBusiness": "personal",
   "theme": {
-   "mode": "light",
+   "mode": "dark",
    "primary": "#4f46e5"
   },
   "voice": {

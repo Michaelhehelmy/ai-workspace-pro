@@ -89,8 +89,8 @@ export function validateConfig(config) {
   if (typeof config.app.voice.autoSpeak !== 'boolean') config.app.voice.autoSpeak = false;
   if (typeof config.app.voice.lang !== 'string') config.app.voice.lang = 'en-US';
 
-  if (!config.app.theme) config.app.theme = { mode: 'light' };
-  if (!config.app.theme.mode) config.app.theme.mode = 'light';
+  if (!config.app.theme) config.app.theme = { mode: 'dark' };
+  if (!config.app.theme.mode) config.app.theme.mode = 'dark';
 
   if (!config.app.ui) config.app.ui = { sidebar: { minWidth: 200, maxWidth: 500 }, chartColors: [] };
   if (!config.app.google) config.app.google = { clientId: '', scopes: [] };

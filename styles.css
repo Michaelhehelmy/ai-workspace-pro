@@ -37,13 +37,200 @@
     Consolas, "Liberation Mono", monospace;
 }
 
-/* Softer, cooler shadows in dark mode */
+/* ==========================================================================
+   Dark design system — default app theme.
+   Canvas stays the darkest surface; cards/headers/pills step up in tone and
+   every Bootstrap component (tables, modals, dropdowns, forms, list-groups,
+   progress) inherits the palette via --bs-* variable overrides.
+   ========================================================================== */
 [data-bs-theme="dark"] {
+  /* Base canvas + text */
+  --bs-body-bg: #0a0d15;
+  --bs-body-bg-rgb: 10, 13, 21;
+  --bs-body-color: #e6e9f2;
+  --bs-emphasis-color: #ffffff;
+  --bs-heading-color: #f4f6fb;
+  --bs-secondary-color: rgba(226, 230, 242, 0.62);
+  --bs-secondary-color-rgb: 226, 230, 242;
+  --bs-tertiary-color: rgba(226, 230, 242, 0.4);
+  --bs-tertiary-color-rgb: 226, 230, 242;
+
+  /* Raised surfaces (cards, headers, list items, avatars) */
+  --bs-secondary-bg: #131827;
+  --bs-secondary-bg-rgb: 19, 24, 39;
+  --bs-tertiary-bg: #1a2133;
+  --bs-tertiary-bg-rgb: 26, 33, 51;
+
+  /* Hairline borders — translucent so backgrounds stay visible */
+  --bs-border-color: rgba(148, 163, 184, 0.16);
+  --bs-border-color-translucent: rgba(148, 163, 184, 0.16);
+
+  /* Brand hue tuned for dark contrast */
+  --bs-primary: #818cf8;
+  --bs-primary-rgb: 129, 140, 248;
+  --bs-link-color: #93a1fe;
+  --bs-link-hover-color: #aab5ff;
+  --bs-code-color: #a5b4fc;
+  --bs-primary-text-emphasis: #c7d2fe;
+  --bs-primary-bg-subtle: #1e2340;
+  --bs-primary-border-subtle: rgba(129, 140, 248, 0.38);
+
+  /* Semantic hues softened for dark surfaces */
+  --bs-secondary: #9ca3af;
+  --bs-success: #34d399;
+  --bs-info: #22d3ee;
+  --bs-warning: #fbbf24;
+  --bs-danger: #f87171;
+  --bs-light: #1a2133;
+  --bs-dark: #05070c;
+
+  --bs-success-text-emphasis: #6ee7b7;
+  --bs-success-bg-subtle: #0d3527;
+  --bs-success-border-subtle: rgba(52, 211, 153, 0.32);
+  --bs-info-text-emphasis: #67e8f9;
+  --bs-info-bg-subtle: #102f3c;
+  --bs-info-border-subtle: rgba(34, 211, 238, 0.32);
+  --bs-warning-text-emphasis: #fde68a;
+  --bs-warning-bg-subtle: #3a2f14;
+  --bs-warning-border-subtle: rgba(251, 191, 36, 0.32);
+  --bs-danger-text-emphasis: #fca5a5;
+  --bs-danger-bg-subtle: #42171f;
+  --bs-danger-border-subtle: rgba(248, 113, 113, 0.34);
+  --bs-secondary-text-emphasis: #cbd5e1;
+  --bs-secondary-bg-subtle: #232a3b;
+  --bs-secondary-border-subtle: rgba(148, 163, 184, 0.26);
+
+  /* Component surfaces */
+  --bs-card-bg: #121724;
+  --bs-card-cap-bg: #141a29;
+  --bs-list-group-bg: #121724;
+  --bs-list-group-border-color: var(--bs-border-color);
+  --bs-list-group-action-hover-bg: var(--bs-tertiary-bg);
+  --bs-list-group-action-active-bg: var(--bs-primary-bg-subtle);
+  --bs-list-group-action-active-color: var(--bs-body-color);
+  --bs-dropdown-bg: #161c2e;
+  --bs-dropdown-border-color: var(--bs-border-color);
+  --bs-dropdown-link-hover-bg: var(--bs-tertiary-bg);
+  --bs-dropdown-link-active-bg: var(--bs-primary-bg-subtle);
+  --bs-dropdown-link-active-color: #ffffff;
+  --bs-modal-bg: #131826;
+  --bs-modal-border-color: var(--bs-border-color);
+  --bs-progress-bg: #1a2133;
+
+  /* Inputs sit a hair inside their container */
+  --bs-form-control-color: var(--bs-body-color);
+
+  /* Shadows tuned for glow-in-the-dark surfaces */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-sm: 0 2px 8px -1px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 12px 32px -12px rgba(0, 0, 0, 0.65);
-  --shadow-lg: 0 28px 70px -26px rgba(0, 0, 0, 0.8);
-  --shadow-primary: 0 10px 26px -10px rgba(99, 102, 241, 0.55);
+  --shadow-sm: 0 2px 8px -1px rgba(0, 0, 0, 0.55);
+  --shadow-md: 0 12px 32px -12px rgba(0, 0, 0, 0.7);
+  --shadow-lg: 0 28px 70px -26px rgba(0, 0, 0, 0.85);
+  --shadow-primary: 0 10px 26px -10px rgba(99, 102, 241, 0.5);
+}
+
+/* Bootstrap redeclares some surface vars locally on each component
+   (e.g. .card { --bs-card-bg: var(--bs-body-bg) }), which would shadow the
+   palette above. Re-assert them at component scope so raised panels stay
+   one step lighter than the canvas in dark.
+   ------------------------------------------------------------------ */
+[data-bs-theme="dark"] .card { --bs-card-bg: #121724; }
+[data-bs-theme="dark"] .list-group { --bs-list-group-bg: #121724; }
+[data-bs-theme="dark"] .list-group-item.active {
+  --bs-list-group-active-bg: var(--bs-primary-bg-subtle);
+  --bs-list-group-active-border-color: var(--bs-primary-border-subtle);
+}
+[data-bs-theme="dark"] .dropdown-menu { --bs-dropdown-bg: #161c2e; }
+[data-bs-theme="dark"] .modal { --bs-modal-bg: #131826; }
+[data-bs-theme="dark"] .modal-backdrop {
+  background-color: rgba(3, 5, 10, 0.7);
+}
+[data-bs-theme="dark"] .form-control,
+[data-bs-theme="dark"] .form-select {
+  --bs-form-control-bg: #0c0f18;
+}
+[data-bs-theme="dark"] .form-control:disabled,
+[data-bs-theme="dark"] .form-select:disabled {
+  --bs-form-control-bg: #0c0f18;
+}
+
+/* Sidebar: quiet brand ambience in the rail */
+[data-bs-theme="dark"] #sidebar {
+  background:
+    radial-gradient(680px 320px at 0% 0%, rgba(99, 102, 241, 0.11), transparent 62%),
+    var(--bs-body-bg);
+}
+
+/* Chat pane: faint stage light above the composer */
+[data-bs-theme="dark"] #pane-chat {
+  background: radial-gradient(1000px 480px at 50% -6%, rgba(99, 102, 241, 0.07), transparent 62%);
+}
+
+/* Raised "panel" bubbles for the assistant in dark */
+[data-bs-theme="dark"] .msg-row.from-bot .msg-bubble {
+  background: linear-gradient(180deg, #1b2236 0%, #131827 100%);
+  border-color: rgba(148, 163, 184, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), var(--shadow-xs);
+}
+[data-bs-theme="dark"] .msg-avatar {
+  background: #1a2133;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+[data-bs-theme="dark"] .msg-row.from-user .msg-avatar {
+  background: var(--bs-primary-bg-subtle);
+  border-color: var(--bs-primary-border-subtle);
+}
+
+/* Frosted-glass composer */
+[data-bs-theme="dark"] #chatComposer {
+  background: rgba(19, 24, 39, 0.82);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  border-color: rgba(148, 163, 184, 0.16);
+}
+[data-bs-theme="dark"] #chatComposer:focus-within {
+  border-color: rgba(129, 140, 248, 0.55);
+  box-shadow: 0 0 0 0.24rem rgba(99, 102, 241, 0.16), var(--shadow-md);
+}
+
+/* Cards: soft top sheen reads as a raised panel */
+[data-bs-theme="dark"] .tab-pane .card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent 56px),
+    var(--bs-card-bg);
+}
+[data-bs-theme="dark"] .tab-pane .card-header {
+  background:
+    linear-gradient(180deg, rgba(129, 140, 248, 0.06), transparent),
+    var(--bs-tertiary-bg);
+}
+
+/* Outline buttons: hue-matched, soft */
+[data-bs-theme="dark"] .btn-outline-secondary {
+  color: var(--bs-secondary-color);
+  border-color: rgba(148, 163, 184, 0.26);
+}
+[data-bs-theme="dark"] .btn-outline-secondary:hover {
+  background: var(--bs-tertiary-bg);
+  color: var(--bs-body-color);
+  border-color: var(--bs-border-color);
+}
+
+/* Inline code glows on dark */
+[data-bs-theme="dark"] .chat-md code {
+  background: rgba(129, 140, 248, 0.16);
+  color: #c7d2fe;
+}
+[data-bs-theme="dark"] .chat-md table th {
+  background: rgba(129, 140, 248, 0.08);
+}
+[data-bs-theme="dark"] .chat-md pre {
+  background: rgba(3, 5, 10, 0.55);
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+[data-bs-theme="dark"] ::selection {
+  background: rgba(129, 140, 248, 0.35);
+  color: #fff;
 }
 
 /* --------------------------------------------------------------------------
@@ -224,6 +411,21 @@ body {
 
 #workspaceTabs .nav-link.active i {
   color: #fff;
+}
+
+/* Sub-navigation section labels */
+#workspaceTabs li.nav-section {
+  list-style: none;
+  padding: 0.65rem 0.75rem 0.28rem;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bs-tertiary-color);
+  user-select: none;
+}
+#workspaceTabs li.nav-section:first-child {
+  padding-top: 0.15rem;
 }
 
 /* Bottom controls */
@@ -834,6 +1036,30 @@ body {
 .form-select:focus {
   border-color: var(--bs-primary);
   box-shadow: 0 0 0 0.22rem var(--bs-primary-bg-subtle);
+}
+
+/* In dark, inputs sit a hair inside their container */
+[data-bs-theme="dark"] .form-control,
+[data-bs-theme="dark"] .form-select {
+  background-color: #0c0f18;
+}
+[data-bs-theme="dark"] .form-control:disabled,
+[data-bs-theme="dark"] .form-select:disabled {
+  background-color: #0c0f18;
+}
+[data-bs-theme="dark"] #configEditor {
+  background-color: #0c0f18;
+}
+
+/* Table headers always match the surface, in both themes (Bootstrap's
+   .table-light forces the light --bs-light thead even on dark) */
+.table-light {
+  --bs-table-bg: var(--bs-tertiary-bg);
+  --bs-table-color: var(--bs-body-color);
+  --bs-table-striped-bg: rgba(127, 127, 127, 0.045);
+}
+[data-bs-theme="dark"] .table {
+  --bs-table-hover-bg: rgba(129, 140, 248, 0.06);
 }
 
 .btn {

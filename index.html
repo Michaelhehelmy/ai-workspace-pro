@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en" data-bs-theme="light">
+<html lang="en" data-bs-theme="dark">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=5.0" />
-<meta name="theme-color" content="#4f46e5">
+<meta name="theme-color" content="#0d0f16">
 <title>AI Workspace Pro</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🤖%3C/text%3E%3C/svg%3E">
 
@@ -28,7 +28,7 @@
 <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.4/dist/purify.min.js"></script>
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
-<body class="bg-body-tertiary">
+<body>
 
 <div class="d-flex vh-100 overflow-hidden" id="mainContainer">
 
@@ -52,9 +52,15 @@
 
     <!-- Navigation Pills -->
     <ul class="nav nav-pills flex-column gap-1 mb-3" id="workspaceTabs" role="tablist">
+      <li class="nav-section">Workspace</li>
       <li class="nav-item">
         <button class="nav-link active d-flex align-items-center gap-2 w-100 text-start" id="tab-chat-btn" data-bs-toggle="pill" data-bs-target="#pane-chat" type="button" role="tab">
           <i class="bi bi-chat-dots-fill"></i> Chat
+        </button>
+      </li>
+      <li class="nav-item">
+        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-coder-btn" data-bs-toggle="pill" data-bs-target="#pane-coder" type="button" role="tab">
+          <i class="bi bi-code-square"></i> Coder
         </button>
       </li>
       <li class="nav-item">
@@ -62,6 +68,7 @@
           <i class="bi bi-database-fill-gear"></i> Data Explorer
         </button>
       </li>
+      <li class="nav-section">Organize</li>
       <li class="nav-item">
         <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-characters-btn" data-bs-toggle="pill" data-bs-target="#pane-characters" type="button" role="tab">
           <i class="bi bi-person-bounding-box"></i> Characters
@@ -77,14 +84,10 @@
           <i class="bi bi-tools"></i> Tools
         </button>
       </li>
+      <li class="nav-section">Engine</li>
       <li class="nav-item">
         <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-models-btn" data-bs-toggle="pill" data-bs-target="#pane-models" type="button" role="tab">
           <i class="bi bi-gpu-card"></i> Models
-        </button>
-      </li>
-      <li class="nav-item">
-        <button class="nav-link d-flex align-items-center gap-2 w-100 text-start" id="tab-coder-btn" data-bs-toggle="pill" data-bs-target="#pane-coder" type="button" role="tab">
-          <i class="bi bi-code-square"></i> Coder
         </button>
       </li>
       <li class="nav-item">
@@ -288,167 +291,6 @@
         <h4 class="mb-1">Model Configuration</h4>
         <small class="text-body-secondary d-block mb-3">Pick a real on‑device model per pipeline stage. One model is resident at a time (policy: swap); the others stay cached on disk.</small>
 
-        <!-- Runtime Settings -->
-        <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
-          <label class="form-label small fw-semibold mb-0" for="dtypeSelect">Data Type</label>
-          <select class="form-select form-select-sm w-auto" id="dtypeSelect">
-            <option value="q8">q8 (quantized, fast)</option>
-            <option value="int8">int8 (8‑bit)</option>
-            <option value="uint8">uint8 (8‑bit)</option>
-            <option value="fp32">fp32 (accurate, large)</option>
-            <option value="fp16">fp16 (half precision)</option>
-          </select>
-          <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" id="modelPreloadAllBtn" type="button"><i class="bi bi-download"></i> Preload all stages</button>
-          <button class="btn btn-sm btn-outline-danger d-flex align-items-center gap-1" id="modelResetDefaultsBtn" type="button"><i class="bi bi-arrow-counterclockwise"></i> Reset to defaults</button>
-          <label class="form-check form-check-inline small mb-0 ms-1 align-items-center d-inline-flex" for="modelPreloadOnOpenChk">
-            <input class="form-check-input me-1" type="checkbox" id="modelPreloadOnOpenChk">
-            <span class="form-check-label">Preload models on page open</span>
-          </label>
-        </div>
-
-        <!-- WASM Memory & Pipeline Settings -->
-        <div class="d-flex flex-wrap gap-3 align-items-end mb-3">
-          <div>
-            <label class="form-label small fw-semibold mb-0" for="wasmHeapMbInput">WASM Heap (MB)</label>
-            <input type="number" class="form-control form-control-sm w-auto" id="wasmHeapMbInput" min="32" max="1024" step="16" value="64" style="width:80px">
-          </div>
-          <div>
-            <label class="form-label small fw-semibold mb-0" for="maxSimultaneousInput">Max Simultaneous</label>
-            <input type="number" class="form-control form-control-sm w-auto" id="maxSimultaneousInput" min="1" max="4" step="1" value="1" style="width:60px">
-          </div>
-          <div>
-            <label class="form-label small fw-semibold mb-0" for="swapThresholdInput">Swap Threshold</label>
-            <input type="number" class="form-control form-control-sm w-auto" id="swapThresholdInput" min="0" max="1" step="0.05" value="0.35" style="width:70px">
-          </div>
-          <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" id="saveMemorySettingsBtn" type="button"><i class="bi bi-check2"></i> Save</button>
-        </div>
-
-        <!-- Backend Routing -->
-        <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
-          <div>
-            <label class="form-label small fw-semibold mb-0" for="dialogBackendSelect">Dialog backend</label>
-            <select class="form-select form-select-sm w-auto" id="dialogBackendSelect">
-              <option value="auto">Auto (prefer remote)</option>
-              <option value="transformers">On-device (Transformers.js)</option>
-              <option value="llamacpp">llama.cpp server</option>
-              <option value="ollama">Ollama</option>
-            </select>
-          </div>
-          <div>
-            <label class="form-label small fw-semibold mb-0" for="embedderBackendSelect">Embedder backend</label>
-            <select class="form-select form-select-sm w-auto" id="embedderBackendSelect">
-              <option value="auto">Auto (prefer remote)</option>
-              <option value="transformers">On-device (Transformers.js)</option>
-              <option value="llamacpp">llama.cpp server</option>
-              <option value="ollama">Ollama</option>
-            </select>
-          </div>
-          <div>
-            <button class="btn btn-sm btn-outline-info d-flex align-items-center gap-1" id="backendHealthProbeBtn" type="button"><i class="bi bi-arrow-repeat"></i> Probe backends</button>
-          </div>
-          <span class="small text-body-secondary ms-2" id="backendHealthStatus"></span>
-        </div>
-
-        <!-- Backend URL Configuration -->
-        <div class="card border mb-3" id="backendUrlConfigCard">
-          <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#backendUrlCollapse" style="cursor:pointer">
-            <small class="fw-semibold text-body-secondary"><i class="bi bi-link-45deg"></i> Backend URLs</small>
-            <i class="bi bi-chevron-down small"></i>
-          </div>
-          <div class="collapse" id="backendUrlCollapse">
-            <div class="card-body p-2">
-              <div class="row g-3">
-                <div class="col-md-6">
-                  <label class="form-label small fw-semibold" for="llamacppUrlInput">llama.cpp Server URL</label>
-                  <input type="url" class="form-control form-control-sm" id="llamacppUrlInput" placeholder="http://localhost:8080/v1">
-                  <div class="form-text">Must end with /v1 for OpenAI-compatible API</div>
-                </div>
-                <div class="col-md-6">
-                  <label class="form-label small fw-semibold" for="ollamaUrlInput">Ollama Server URL</label>
-                  <input type="url" class="form-control form-control-sm" id="ollamaUrlInput" placeholder="http://localhost:11434">
-                </div>
-              </div>
-              <div class="d-flex gap-2 mt-2">
-                <label class="form-check form-check-inline small mb-0 align-items-center" for="llamacppEnabledChk">
-                  <input class="form-check-input me-1" type="checkbox" id="llamacppEnabledChk"> Enable llama.cpp
-                </label>
-                <label class="form-check form-check-inline small mb-0 align-items-center" for="ollamaEnabledChk">
-                  <input class="form-check-input me-1" type="checkbox" id="ollamaEnabledChk"> Enable Ollama
-                </label>
-                <button class="btn btn-sm btn-outline-primary ms-auto" id="saveBackendUrlsBtn" type="button"><i class="bi bi-check2"></i> Save</button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Custom Model Input -->
-        <div class="card border mb-3">
-          <div class="card-header bg-body-tertiary py-1 px-2">
-            <small class="fw-semibold text-body-secondary"><i class="bi bi-plus-circle"></i> Add Custom Model</small>
-          </div>
-          <div class="card-body p-2">
-            <div class="row g-2 align-items-end">
-              <div class="col-md-4">
-                <label class="form-label small fw-semibold" for="customModelIdInput">HuggingFace Model ID</label>
-                <input type="text" class="form-control form-control-sm" id="customModelIdInput" placeholder="e.g., Xenova/all-MiniLM-L6-v2">
-              </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold" for="customModelTypeSelect">Type</label>
-                <select class="form-select form-select-sm" id="customModelTypeSelect">
-                  <option value="embedder">Embedder</option>
-                  <option value="classifier">Classifier</option>
-                  <option value="ner">NER</option>
-                  <option value="generator">Generator</option>
-                </select>
-              </div>
-              <div class="col-md-3">
-                <label class="form-label small fw-semibold" for="customModelDescInput">Description</label>
-                <input type="text" class="form-control form-control-sm" id="customModelDescInput" placeholder="Optional description">
-              </div>
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold" for="customModelSizeInput">Size (MB)</label>
-                <input type="number" class="form-control form-control-sm" id="customModelSizeInput" placeholder="Auto">
-              </div>
-              <div class="col-md-1">
-                <button class="btn btn-sm btn-primary w-100" id="addCustomModelBtn" type="button"><i class="bi bi-plus"></i></button>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Browse Hugging Face -->
-        <div class="card border mb-3">
-          <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center">
-            <small class="fw-semibold text-body-secondary"><i class="bi bi-cloud-download"></i> Browse Hugging Face</small>
-            <span class="small text-body-secondary" id="hubStatus"></span>
-          </div>
-          <div class="card-body p-2">
-            <div class="row g-2 align-items-end">
-              <div class="col-md-2">
-                <label class="form-label small fw-semibold" for="hubTypeSelect">Type</label>
-                <select class="form-select form-select-sm" id="hubTypeSelect">
-                  <option value="embedder">Embedder</option>
-                  <option value="classifier">Classifier</option>
-                  <option value="ner">NER</option>
-                  <option value="generator">Generator</option>
-                </select>
-              </div>
-              <div class="col-md-6">
-                <label class="form-label small fw-semibold" for="hubSearchInput">Search (optional)</label>
-                <input type="text" class="form-control form-control-sm" id="hubSearchInput" placeholder="e.g., bge, nomic, t5… (blank = most downloaded)">
-              </div>
-              <div class="col-md-2">
-                <button class="btn btn-sm btn-primary w-100" id="hubSearchBtn" type="button"><i class="bi bi-search"></i> Search</button>
-              </div>
-              <div class="col-md-2">
-                <button class="btn btn-sm btn-outline-secondary w-100" id="hubClearBtn" type="button"><i class="bi bi-x"></i> Clear</button>
-              </div>
-            </div>
-            <div class="small text-body-secondary mt-2 mb-2">Shows transformers.js-ready models (ONNX) from Hugging Face. Add one to the catalog, then pick it in a stage below.</div>
-            <div id="hubResults" class="vh-25" style="max-height:280px;overflow:auto"></div>
-          </div>
-        </div>
-
         <!-- Device & Recommendations -->
         <div class="card border mb-3">
           <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center">
@@ -522,6 +364,179 @@
             </div>
             <ul id="modelStagesList" class="list-unstyled d-flex flex-wrap gap-2 mb-2"></ul>
             <ul id="modelErrorList" class="list-unstyled small text-danger mb-0"></ul>
+          </div>
+        </div>
+
+        <!-- Runtime Settings -->
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary py-1 px-2">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-sliders"></i> Runtime Settings</small>
+          </div>
+          <div class="card-body p-2 d-flex flex-column gap-3">
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+              <label class="form-label small fw-semibold mb-0" for="dtypeSelect">Data Type</label>
+              <select class="form-select form-select-sm w-auto" id="dtypeSelect">
+                <option value="q8">q8 (quantized, fast)</option>
+                <option value="int8">int8 (8‑bit)</option>
+                <option value="uint8">uint8 (8‑bit)</option>
+                <option value="fp32">fp32 (accurate, large)</option>
+                <option value="fp16">fp16 (half precision)</option>
+              </select>
+              <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" id="modelPreloadAllBtn" type="button"><i class="bi bi-download"></i> Preload all stages</button>
+              <button class="btn btn-sm btn-outline-danger d-flex align-items-center gap-1" id="modelResetDefaultsBtn" type="button"><i class="bi bi-arrow-counterclockwise"></i> Reset to defaults</button>
+              <label class="form-check form-check-inline small mb-0 ms-1 align-items-center d-inline-flex" for="modelPreloadOnOpenChk">
+                <input class="form-check-input me-1" type="checkbox" id="modelPreloadOnOpenChk">
+                <span class="form-check-label">Preload models on page open</span>
+              </label>
+            </div>
+            <div class="d-flex flex-wrap gap-3 align-items-end">
+              <div>
+                <label class="form-label small fw-semibold mb-0" for="wasmHeapMbInput">WASM Heap (MB)</label>
+                <input type="number" class="form-control form-control-sm w-auto" id="wasmHeapMbInput" min="32" max="1024" step="16" value="64" style="width:80px">
+              </div>
+              <div>
+                <label class="form-label small fw-semibold mb-0" for="maxSimultaneousInput">Max Simultaneous</label>
+                <input type="number" class="form-control form-control-sm w-auto" id="maxSimultaneousInput" min="1" max="4" step="1" value="1" style="width:60px">
+              </div>
+              <div>
+                <label class="form-label small fw-semibold mb-0" for="swapThresholdInput">Swap Threshold</label>
+                <input type="number" class="form-control form-control-sm w-auto" id="swapThresholdInput" min="0" max="1" step="0.05" value="0.35" style="width:70px">
+              </div>
+              <button class="btn btn-sm btn-outline-primary d-flex align-items-center gap-1" id="saveMemorySettingsBtn" type="button"><i class="bi bi-check2"></i> Save</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backend Routing -->
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary py-1 px-2">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-shuffle"></i> Backend Routing</small>
+          </div>
+          <div class="card-body p-2">
+            <div class="d-flex flex-wrap gap-2 align-items-end mb-2">
+              <div>
+                <label class="form-label small fw-semibold mb-0" for="dialogBackendSelect">Dialog backend</label>
+                <select class="form-select form-select-sm w-auto" id="dialogBackendSelect">
+                  <option value="auto">Auto (prefer remote)</option>
+                  <option value="transformers">On-device (Transformers.js)</option>
+                  <option value="llamacpp">llama.cpp server</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label small fw-semibold mb-0" for="embedderBackendSelect">Embedder backend</label>
+                <select class="form-select form-select-sm w-auto" id="embedderBackendSelect">
+                  <option value="auto">Auto (prefer remote)</option>
+                  <option value="transformers">On-device (Transformers.js)</option>
+                  <option value="llamacpp">llama.cpp server</option>
+                  <option value="ollama">Ollama</option>
+                </select>
+              </div>
+              <div>
+                <button class="btn btn-sm btn-outline-info d-flex align-items-center gap-1" id="backendHealthProbeBtn" type="button"><i class="bi bi-arrow-repeat"></i> Probe backends</button>
+              </div>
+              <span class="small text-body-secondary ms-2" id="backendHealthStatus"></span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Backend URL Configuration -->
+        <div class="card border mb-3" id="backendUrlConfigCard">
+          <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#backendUrlCollapse" style="cursor:pointer">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-link-45deg"></i> Backend URLs</small>
+            <i class="bi bi-chevron-down small"></i>
+          </div>
+          <div class="collapse" id="backendUrlCollapse">
+            <div class="card-body p-2">
+              <div class="row g-3">
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold" for="llamacppUrlInput">llama.cpp Server URL</label>
+                  <input type="url" class="form-control form-control-sm" id="llamacppUrlInput" placeholder="http://localhost:8080/v1">
+                  <div class="form-text">Must end with /v1 for OpenAI-compatible API</div>
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small fw-semibold" for="ollamaUrlInput">Ollama Server URL</label>
+                  <input type="url" class="form-control form-control-sm" id="ollamaUrlInput" placeholder="http://localhost:11434">
+                </div>
+              </div>
+              <div class="d-flex gap-2 mt-2">
+                <label class="form-check form-check-inline small mb-0 align-items-center" for="llamacppEnabledChk">
+                  <input class="form-check-input me-1" type="checkbox" id="llamacppEnabledChk"> Enable llama.cpp
+                </label>
+                <label class="form-check form-check-inline small mb-0 align-items-center" for="ollamaEnabledChk">
+                  <input class="form-check-input me-1" type="checkbox" id="ollamaEnabledChk"> Enable Ollama
+                </label>
+                <button class="btn btn-sm btn-outline-primary ms-auto" id="saveBackendUrlsBtn" type="button"><i class="bi bi-check2"></i> Save</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Browse Hugging Face -->
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary py-1 px-2 d-flex justify-content-between align-items-center">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-cloud-download"></i> Browse Hugging Face</small>
+            <span class="small text-body-secondary" id="hubStatus"></span>
+          </div>
+          <div class="card-body p-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold" for="hubTypeSelect">Type</label>
+                <select class="form-select form-select-sm" id="hubTypeSelect">
+                  <option value="embedder">Embedder</option>
+                  <option value="classifier">Classifier</option>
+                  <option value="ner">NER</option>
+                  <option value="generator">Generator</option>
+                </select>
+              </div>
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold" for="hubSearchInput">Search (optional)</label>
+                <input type="text" class="form-control form-control-sm" id="hubSearchInput" placeholder="e.g., bge, nomic, t5… (blank = most downloaded)">
+              </div>
+              <div class="col-md-2">
+                <button class="btn btn-sm btn-primary w-100" id="hubSearchBtn" type="button"><i class="bi bi-search"></i> Search</button>
+              </div>
+              <div class="col-md-2">
+                <button class="btn btn-sm btn-outline-secondary w-100" id="hubClearBtn" type="button"><i class="bi bi-x"></i> Clear</button>
+              </div>
+            </div>
+            <div class="small text-body-secondary mt-2 mb-2">Shows transformers.js-ready models (ONNX) from Hugging Face. Add one to the catalog, then pick it in a stage above.</div>
+            <div id="hubResults" class="vh-25" style="max-height:280px;overflow:auto"></div>
+          </div>
+        </div>
+
+        <!-- Custom Model Input -->
+        <div class="card border mb-3">
+          <div class="card-header bg-body-tertiary py-1 px-2">
+            <small class="fw-semibold text-body-secondary"><i class="bi bi-plus-circle"></i> Add Custom Model</small>
+          </div>
+          <div class="card-body p-2">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-4">
+                <label class="form-label small fw-semibold" for="customModelIdInput">HuggingFace Model ID</label>
+                <input type="text" class="form-control form-control-sm" id="customModelIdInput" placeholder="e.g., Xenova/all-MiniLM-L6-v2">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold" for="customModelTypeSelect">Type</label>
+                <select class="form-select form-select-sm" id="customModelTypeSelect">
+                  <option value="embedder">Embedder</option>
+                  <option value="classifier">Classifier</option>
+                  <option value="ner">NER</option>
+                  <option value="generator">Generator</option>
+                </select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold" for="customModelDescInput">Description</label>
+                <input type="text" class="form-control form-control-sm" id="customModelDescInput" placeholder="Optional description">
+              </div>
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold" for="customModelSizeInput">Size (MB)</label>
+                <input type="number" class="form-control form-control-sm" id="customModelSizeInput" placeholder="Auto">
+              </div>
+              <div class="col-md-1">
+                <button class="btn btn-sm btn-primary w-100" id="addCustomModelBtn" type="button"><i class="bi bi-plus"></i></button>
+              </div>
+            </div>
           </div>
         </div>
 
