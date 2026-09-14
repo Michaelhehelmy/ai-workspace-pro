@@ -1569,6 +1569,148 @@ async function runAllTests() {
     }
   });
 
+  await runTest('Worker', '/api/hf/search proxies a search CORS-open and forwards only whitelisted params', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => {
+      seen = String(url);
+      return new Response(JSON.stringify([{ id: 'Xenova/bge-small-en-v1.5', library_name: 'transformers.js', pipeline_tag: 'feature-extraction' }]), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/search?search=bge&library=transformers.js&sort=downloads&direction=-1&limit=25&evil=1', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assertEquals(response.headers.get('access-control-allow-origin'), '*');
+      const body = await response.json();
+      assertEquals(body[0].id, 'Xenova/bge-small-en-v1.5');
+      assert(seen.startsWith('https://huggingface.co/api/models?'), `expected Hub models upstream, got ${seen}`);
+      assert(seen.includes('search=bge') && seen.includes('library=transformers.js') && seen.includes('limit=25'), `whitelisted params must forward, got ${seen}`);
+      assert(!seen.includes('evil'), 'non-whitelisted params must never reach the upstream');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/search drops invalid direction/limit values from the forward', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => { seen = String(url); return new Response('[]', { status: 200 }); };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/search?search=bge&direction=sideways&limit=99999', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assert(!seen.includes('direction'), 'invalid direction must be dropped');
+      assert(!seen.includes('limit'), 'out-of-range limit must be dropped');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/search defaults to the Hub listing when no params', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => { seen = String(url); return new Response('[]', { status: 200 }); };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/search', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assert(seen === 'https://huggingface.co/api/models?' || seen.startsWith('https://huggingface.co/api/models?'), `got ${seen}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/info proxies model info with blobs + config expand', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => {
+      seen = String(url);
+      return new Response(JSON.stringify({ id: 'Xenova/all-MiniLM-L6-v2', gated: false, siblings: [{ rfilename: 'onnx/model.onnx', size: 44529469 }] }), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/info?path=Xenova/all-MiniLM-L6-v2', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.id, 'Xenova/all-MiniLM-L6-v2');
+      assertEquals(body.siblings[0].size, 44529469);
+      assert(seen.startsWith('https://huggingface.co/api/models/Xenova/all-MiniLM-L6-v2?'), `got ${seen}`);
+      assert(seen.includes('blobs=true') && seen.includes('expand%5B%5D=config'), `expected blobs + config expand, got ${seen}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/files proxies a recursive file tree for a validated repo + revision', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => {
+      seen = String(url);
+      return new Response(JSON.stringify([
+        { type: 'file', path: 'README.md', size: 512 },
+        { type: 'file', path: 'qnwen2.5-0.5b-q4_k_m.gguf', size: 390594560 },
+        { type: 'directory', path: 'subdir' },
+      ]), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/files?path=Qwen%2FQwen2.5-0.5B-Instruct&revision=main', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      const body = await response.json();
+      assertEquals(body.length, 3, 'proxy passes the upstream tree through verbatim (client filters type=file)');
+      assert(seen.startsWith('https://huggingface.co/api/models/Qwen/Qwen2.5-0.5B-Instruct/tree/main?recursive=true'), `got ${seen}`);
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/files rejects traversal paths and bad revisions', async () => {
+    const bad = [
+      '/api/hf/files?path=../../etc/passwd',
+      '/api/hf/files?path=onlyowner',
+      '/api/hf/files?path=a%2Fb&revision=../evil',
+      '/api/hf/files?path=a%2Fb&revision=refs%2Fheads%2Fmain',
+    ];
+    for (const url of bad) {
+      const response = await worker.fetch(new Request('https://ai-workspace-pro.example.com' + url, { method: 'GET' }), {});
+      assertEquals(response.status, 400, `expected 400 for ${url}`);
+      const body = await response.json();
+      assert(body.ok === false, `expected typed error for ${url}`);
+    }
+  });
+
+  await runTest('Worker', '/api/hf/info rejects non-repo paths', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/hf/info?path=../../etc/passwd', { method: 'GET' }),
+      {}
+    );
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assert(body.ok === false, 'expected a typed error body');
+  });
+
+  await runTest('Worker', '/api/hf/ OPTIONS preflights CORS-open', async () => {
+    const response = await worker.fetch(
+      new Request('https://ai-workspace-pro.example.com/api/hf/files', {
+        method: 'OPTIONS',
+        headers: { origin: 'https://example.com', 'access-control-request-method': 'GET' },
+      }),
+      {}
+    );
+    assertEquals(response.status, 204);
+    assertEquals(response.headers.get('access-control-allow-origin'), '*');
+  });
+
   await runTest('Worker', 'non-api requests are delegated to the ASSETS binding', async () => {
     let served = null;
     const env = {

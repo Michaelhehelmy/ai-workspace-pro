@@ -1006,34 +1006,67 @@ function wireHubDiscovery() {
   const searchBtn = document.getElementById('hubSearchBtn');
   const clearBtn = document.getElementById('hubClearBtn');
   const typeSel = document.getElementById('hubTypeSelect');
+  const formatSel = document.getElementById('hubFormatSelect');
   const searchInput = document.getElementById('hubSearchInput');
   const results = document.getElementById('hubResults');
   const statusEl = document.getElementById('hubStatus');
   if (!searchBtn || !typeSel || !results) return;
 
   const setBusy = (t) => { if (statusEl) statusEl.textContent = t || ''; };
+  let fmtSize = (_n) => '';
+
+  async function addCatalogEntry(entry) {
+    const ms = state.config?.modelSettings || {};
+    const avail = Array.isArray(ms.availableModels) ? [...ms.availableModels] : [];
+    if (avail.some(m => m.id === entry.id)) throw new Error('Model already exists in catalog.');
+    avail.push({ ...entry });
+    await configAPI.updateConfig('modelSettings.availableModels', avail);
+  }
+
+  function sizeMb(bytes) {
+    const n = Number(bytes) || 0;
+    return n >= 1048576 ? Math.max(1, Math.round(n / 1048576)) : undefined;
+  }
 
   async function runSearch() {
     const type = typeSel.value || 'embedder';
-    const q = (searchInput ? searchInput.value : '').trim().toLowerCase();
+    const format = (formatSel && formatSel.value) || 'transformers.js';
+    const q = (searchInput ? searchInput.value : '').trim();
     try {
       setBusy('searching…');
-      const HUB = await import('./ai/hub.js');
-      let list = await HUB.discoverModels(type, { limit: 25 });
-      if (q) list = list.filter(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
+      const HUB = await import('./ai/hf.js');
+      fmtSize = HUB.formatBytes;
+      const list = await HUB.searchHub({
+        query: q || undefined,
+        type,
+        library: format === 'transformers.js' ? 'transformers.js' : undefined,
+        filter: format === 'gguf' ? 'gguf' : undefined,
+        limit: 25,
+      });
       if (!list.length) {
-        results.innerHTML = '<div class="small text-body-secondary py-2">No transformers.js models found for this type. Try a different type or leave the search empty.</div>';
-        setBusy('');
+        const note = format === 'gguf'
+          ? 'No GGUF (llama.cpp / Ollama) models found for these filters.'
+          : 'No transformers.js models found for these filters. Try a different type, format, or search term.';
+        results.innerHTML = `<div class="small text-body-secondary py-2">${escapeHtml(note)}</div>`;
+        setBusy('0 models');
         return;
       }
-      results.innerHTML = list.map(m => `
+      results.innerHTML = list.map(m => {
+        const fmt = (m.library === 'transformers.js' || (m.tags || []).includes('transformers.js'))
+          ? '<span class="badge text-bg-info">ONNX</span>'
+          : (m.tags || []).some(t => /gguf/i.test(t))
+            ? '<span class="badge text-bg-warning">GGUF</span>'
+            : '';
+        const gatedTag = m.gated ? ' <span class="badge text-bg-secondary" title="Gated — request access on Hugging Face">gated</span>' : '';
+        return `
         <div class="d-flex justify-content-between align-items-center small py-1 border-bottom">
           <div class="me-2 text-truncate">
-            <span class="fw-semibold">${escapeHtml(m.id)}</span>
+            <span class="fw-semibold">${escapeHtml(m.id)}</span>${fmt}${gatedTag}
             <span class="text-body-secondary"> · ${Number(m.downloads || 0).toLocaleString()} downloads</span>
           </div>
-          <button class="btn btn-sm btn-outline-primary py-0 flex-shrink-0" type="button" data-hub-add="${escapeHtml(m.id)}" data-hub-type="${escapeHtml(m.type)}" data-hub-dl="${Number(m.downloads || 0)}">Add</button>
-        </div>`).join('');
+          <button class="btn btn-sm btn-outline-primary py-0 flex-shrink-0" type="button" data-hub-add="${escapeHtml(m.id)}" data-hub-type="${escapeHtml(type)}" data-hub-dl="${Number(m.downloads || 0)}" ${m.gated ? 'disabled title="Gated model"' : ''}>Add</button>
+        </div>`;
+      }).join('');
       results.querySelectorAll('[data-hub-add]').forEach(btn => {
         btn.addEventListener('click', () => addHubModel(
           btn.getAttribute('data-hub-add'),
@@ -1048,30 +1081,114 @@ function wireHubDiscovery() {
     }
   }
 
-  async function addHubModel(id, type, downloads) {
+  function renderGgufPicker(id, type, downloads, ggufFiles) {
+    const row = results.querySelector(`[data-hub-add="${CSS.escape(id)}"]`);
+    if (!row) return;
+    const wrap = document.createElement('div');
+    wrap.className = 'small py-1';
+    wrap.innerHTML = `
+      <div class="d-flex flex-wrap align-items-center gap-1">
+        <span class="text-body-secondary">GGUF weights — pick a quant:</span>
+        <select class="form-select form-select-sm w-auto d-inline-block gguf-pick" data-gguf-id="${escapeHtml(id)}">
+          ${ggufFiles.slice(0, 30).map(f => `<option value="${escapeHtml(f.path)}" data-size="${f.size || 0}">${escapeHtml(f.path)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm btn-outline-primary py-0" type="button" data-gguf-confirm="${escapeHtml(id)}">Add</button>
+        <button class="btn btn-sm btn-outline-secondary py-0" type="button" data-gguf-cancel="${escapeHtml(id)}">Cancel</button>
+      </div>`;
+    row.replaceWith(wrap);
+    const pick = results.querySelector(`select.gguf-pick[data-gguf-id="${CSS.escape(id)}"]`);
+    const confirmBtn = results.querySelector(`[data-gguf-confirm="${CSS.escape(id)}"]`);
+    if (pick && confirmBtn) {
+      const label = document.createElement('span');
+      label.className = 'text-body-secondary small ms-1';
+      const paint = () => {
+        const opt = pick.selectedOptions[0];
+        label.textContent = opt && opt.dataset.size ? ' · ' + fmtSize(Number(opt.dataset.size)) : '';
+      };
+      pick.after(label);
+      pick.addEventListener('change', paint);
+      paint();
+      confirmBtn.addEventListener('click', async () => {
+        const opt = pick.selectedOptions[0];
+        if (!opt) return;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = '…';
+        try {
+          await addHubModel(id, type, downloads, { file: opt.value, sizeBytes: Number(opt.dataset.size || 0), format: 'gguf' });
+        } catch (err) {
+          showToast(err && err.message ? err.message : String(err), 'error');
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Add';
+        }
+      });
+    }
+    const cancelBtn = results.querySelector(`[data-gguf-cancel="${CSS.escape(id)}"]`);
+    if (cancelBtn) cancelBtn.addEventListener('click', () => runSearch());
+  }
+
+  async function addHubModel(id, type, downloads, opts = {}) {
     const btn = results.querySelector(`[data-hub-add="${CSS.escape(id)}"]`);
     if (btn) { btn.disabled = true; btn.textContent = '…'; }
     try {
-      const HUB = await import('./ai/hub.js');
-      const info = await HUB.getHubModelInfo(id);
-      if (!info || !info.hasOnnx) throw new Error('This model does not ship ONNX weights, so it cannot run in the browser.');
-      const ms = state.config?.modelSettings || {};
-      const avail = Array.isArray(ms.availableModels) ? [...ms.availableModels] : [];
-      if (avail.some(m => m.id === id)) throw new Error('Model already exists in catalog.');
-      avail.push({
-        id,
-        type: type || 'embedder',
-        description: `Added from Hugging Face · ${Number(downloads || 0).toLocaleString()} downloads`,
-        sizeMb: info.sizeMb,
-        custom: true,
-        source: 'hub'
-      });
-      await configAPI.updateConfig('modelSettings.availableModels', avail);
-      renderConfigEditor();
-      await populateModelSelects();
-      await renderModelsPanel();
-      showToast(`Model "${id}" added to catalog.`, 'success');
-      runSearch();
+      const HUB = await import('./ai/hf.js');
+      fmtSize = HUB.formatBytes;
+      // A quant already chosen in the GGUF picker — persist directly.
+      if (opts.file) {
+        await addCatalogEntry({
+          id,
+          type: type || 'generator',
+          description: `Added from Hugging Face · GGUF · ${Number(downloads || 0).toLocaleString()} downloads`,
+          sizeMb: sizeMb(opts.sizeBytes),
+          file: opts.file,
+          format: opts.format || 'gguf',
+          custom: true,
+          source: 'hub',
+        });
+        await renderConfigEditor();
+        await populateModelSelects();
+        await renderModelsPanel();
+        showToast(`Model "${id}" (${opts.file}) added to catalog.`, 'success');
+        runSearch();
+        return;
+      }
+
+      const info = await HUB.getHubInfo(id);
+      if (!info) throw new Error('Model "' + id + '" not found on Hugging Face.');
+      if (info.gated) throw new Error('"' + id + '" is gated — request access on Hugging Face, then retry.');
+
+      const tree = await HUB.getRepoTree(id);
+      const cats = HUB.categorizeFiles(tree);
+      const onnxPick = HUB.preferredOnnx(cats.onnx);
+      if (onnxPick) {
+        await addCatalogEntry({
+          id,
+          type: type || 'embedder',
+          description: `Added from Hugging Face · Transformers.js (ONNX) · ${Number(downloads || 0).toLocaleString()} downloads`,
+          sizeMb: sizeMb(onnxPick.size),
+          file: onnxPick.path,
+          format: 'onnx',
+          custom: true,
+          source: 'hub',
+        });
+        await renderConfigEditor();
+        await populateModelSelects();
+        await renderModelsPanel();
+        showToast(`Model "${id}" added to catalog (${onnxPick.path}).`, 'success');
+        runSearch();
+        return;
+      }
+
+      if (cats.gguf.length) {
+        // No ONNX weights but GGUF quants exist (llama.cpp / Ollama target).
+        renderGgufPicker(id, type, downloads, cats.gguf);
+        if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
+        return;
+      }
+
+      if (cats.safetensors.length) {
+        throw new Error('"' + id + '" ships only PyTorch (.safetensors) weights — the app needs ONNX or GGUF files.');
+      }
+      throw new Error('No runnable weight files (.onnx or .gguf) found in "' + id + '".');
     } catch (err) {
       showToast(err && err.message ? err.message : String(err), 'error');
       if (btn) { btn.disabled = false; btn.textContent = 'Add'; }
@@ -1079,7 +1196,12 @@ function wireHubDiscovery() {
   }
 
   if (clearBtn && searchInput) {
-    clearBtn.addEventListener('click', () => { searchInput.value = ''; results.innerHTML = ''; setBusy(''); });
+    clearBtn.addEventListener('click', () => {
+      searchInput.value = '';
+      if (formatSel) formatSel.value = 'transformers.js';
+      results.innerHTML = '';
+      setBusy('');
+    });
   }
   if (searchInput) searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
   searchBtn.addEventListener('click', runSearch);

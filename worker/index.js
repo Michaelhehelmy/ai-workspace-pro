@@ -13,7 +13,7 @@
  */
 
 const SERVICE = 'ai-workspace-pro';
-const VERSION = '2.4.0';
+const VERSION = '2.5.0';
 
 function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
@@ -33,6 +33,10 @@ const REPO_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 // The file segment may include subdirectories (e.g. onnx/tokenizer.json) but
 // never ".." or "//", so the proxy stays a fixed-target pass-through.
 const RAW_MODEL_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/resolve\/(main|[0-9a-f]{40})\/([A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*)$/;
+
+// Git-revision token allowed on the Hub file-tree endpoint: a branch name
+// (short refs), a full 40-char commit sha, or a tag. "main" is the default.
+const HF_REVISION_RE = /^(main|[0-9a-f]{40}|[A-Za-z0-9._-]+)$/;
 
 // Workers cap response bodies at 100MB, and a ~0.5B ONNX model ships weight
 // blobs (model.onnx / model.onnx_data / *quantized / *.safetensors) far larger
@@ -299,10 +303,51 @@ export default {
       }
     }
 
+    // ── Hugging Face catalog surface — Phase B ─────────────────────────────
+    // A @huggingface/hub-style catalog for the Models tab. The SPA mirrors
+    // listModels()/getModelInfo()/listModelFiles() behind these endpoints so it
+    // can search the Hub (real server-side `search`, library/filter hints),
+    // fetch model info (siblings with sizes + config), and list a repo's
+    // recursive file tree. That powers the detect-ONNX-vs-GGUF add flow that
+    // seeds the dynamic model catalog. Same fixed-upstream rule as /api/hub/*:
+    // the target is always huggingface.co, params are whitelisted, and repo
+    // paths are validated to the "org/repo" shape (plus a safe revision token).
+    const HF_SEARCH_OK = new Set(['search', 'author', 'library', 'filter', 'sort', 'direction', 'limit', 'offset', 'full']);
+    if (request.method === 'GET' && pathname === '/api/hf/search') {
+      const forward = new URLSearchParams();
+      for (const key of url.searchParams.keys()) {
+        if (!HF_SEARCH_OK.has(key)) continue;
+        const value = url.searchParams.get(key);
+        if (key === 'direction' && !['1', '-1'].includes(value)) continue;
+        if (key === 'limit' && !(Number.isInteger(Number(value)) && Number(value) >= 1 && Number(value) <= 100)) continue;
+        if (key === 'offset' && !(Number.isInteger(Number(value)) && Number(value) >= 0)) continue;
+        forward.set(key, value);
+      }
+      return proxyUpstream(`https://huggingface.co/api/models?${forward}`, 300);
+    }
+    if (request.method === 'GET' && pathname === '/api/hf/info') {
+      const modelPath = (url.searchParams.get('path') || '').trim();
+      if (!REPO_PATH_RE.test(modelPath)) {
+        return json({ ok: false, error: 'Invalid "path" parameter' }, 400);
+      }
+      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}?blobs=true&expand%5B%5D=config`, 300);
+    }
+    if (request.method === 'GET' && pathname === '/api/hf/files') {
+      const modelPath = (url.searchParams.get('path') || '').trim();
+      const revision = (url.searchParams.get('revision') || 'main').trim();
+      if (!REPO_PATH_RE.test(modelPath)) {
+        return json({ ok: false, error: 'Invalid "path" parameter' }, 400);
+      }
+      if (!HF_REVISION_RE.test(revision) || revision.split('/').some((s) => s === '.' || s === '..')) {
+        return json({ ok: false, error: 'Invalid "revision" parameter' }, 400);
+      }
+      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}/tree/${encodeURIComponent(revision)}?recursive=true`, 300);
+    }
+
     // ── Cloudflare AI backend — Phase A ─────────────────────────────────────
     // Chat (streamed NDJSON or, for tool calling, a single NDJSON response)
     // and text embeddings, both over the Workers AI binding.
-    if (request.method === 'OPTIONS' && pathname.startsWith('/api/ai/')) {
+    if (request.method === 'OPTIONS' && (pathname.startsWith('/api/ai/') || pathname.startsWith('/api/hf/'))) {
       return new Response(null, {
         status: 204,
         headers: {

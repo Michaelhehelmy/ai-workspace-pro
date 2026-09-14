@@ -491,9 +491,17 @@
                   <option value="generator">Generator</option>
                 </select>
               </div>
-              <div class="col-md-6">
+              <div class="col-md-2">
+                <label class="form-label small fw-semibold" for="hubFormatSelect">Format</label>
+                <select class="form-select form-select-sm" id="hubFormatSelect">
+                  <option value="transformers.js">ONNX</option>
+                  <option value="any">Any</option>
+                  <option value="gguf">GGUF</option>
+                </select>
+              </div>
+              <div class="col-md-4">
                 <label class="form-label small fw-semibold" for="hubSearchInput">Search (optional)</label>
-                <input type="text" class="form-control form-control-sm" id="hubSearchInput" placeholder="e.g., bge, nomic, t5… (blank = most downloaded)">
+                <input type="text" class="form-control form-control-sm" id="hubSearchInput" placeholder="e.g., bge, qwen, t5… (blank = most downloaded)">
               </div>
               <div class="col-md-2">
                 <button class="btn btn-sm btn-primary w-100" id="hubSearchBtn" type="button"><i class="bi bi-search"></i> Search</button>
@@ -502,7 +510,7 @@
                 <button class="btn btn-sm btn-outline-secondary w-100" id="hubClearBtn" type="button"><i class="bi bi-x"></i> Clear</button>
               </div>
             </div>
-            <div class="small text-body-secondary mt-2 mb-2">Shows transformers.js-ready models (ONNX) from Hugging Face. Add one to the catalog, then pick it in a stage above.</div>
+            <div class="small text-body-secondary mt-2 mb-2">Search Hugging Face by name and add a repo to the catalog. <strong>ONNX</strong> models run in the browser (Transformers.js); <strong>GGUF</strong> weights target the llama.cpp / Ollama backends — pick a quant on add.</div>
             <div id="hubResults" class="vh-25" style="max-height:280px;overflow:auto"></div>
           </div>
         </div>
