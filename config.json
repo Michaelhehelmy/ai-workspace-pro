@@ -49,7 +49,7 @@
      "enabled": false
     },
     "cfai": {
-     "model": "@cf/meta/llama-3.1-8b-instruct",
+     "model": "@cf/mistralai/mistral-small-3.1-24b-instruct",
      "embedModel": "@cf/baai/bge-base-en-v1.5",
      "enabled": true
     }

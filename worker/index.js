@@ -53,7 +53,10 @@ const RAW_LARGE_FILE_RE = /\.(?:safetensors|onnx|onnx_data|bin|pt|pth|msgpack|gg
 // browser never holds an API key. Only the pinned model surface below is
 // exposed — this is not a token/URL relay.
 const CORS_HEAD = { 'access-control-allow-origin': '*' };
-const CF_DIALOG_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+// Verified live against the Workers AI catalog (Sep 2026): not deprecated or
+// beta, supports tool calling, and is served synchronously (no async queue) so
+// it streams. Handles legacy `{ response }` and OpenAI `choices` shapes below.
+const CF_DIALOG_MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const CF_EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 const CF_EMBED_MAX_CHARS = 4096;
 const CF_ALLOWED_ROLES = new Set(['system', 'user', 'assistant']);
@@ -87,27 +90,92 @@ function sanitizeMessages(messages) {
   return clean.length ? clean : null;
 }
 
-// Workers AI may attach tool_calls either at the top level or under `message`.
+// Workers AI may attach tool_calls at the top level, under `message`, or
+// inside an OpenAI-style `choices[0].message`. Check them all.
 function pickToolCalls(out) {
   if (!out || typeof out !== 'object') return null;
-  if (Array.isArray(out.tool_calls) && out.tool_calls.length) return out.tool_calls;
-  if (out.message && Array.isArray(out.message.tool_calls) && out.message.tool_calls.length) {
-    return out.message.tool_calls;
+  const roots = [out, out.message || null, (out.choices && out.choices[0] && out.choices[0].message) || null];
+  for (const root of roots) {
+    if (root && Array.isArray(root.tool_calls) && root.tool_calls.length) return root.tool_calls;
   }
   return null;
 }
 
+// Normalize to the shared { id, type, function: { name, arguments } } shape
+// whether the runtime returns OpenAI-style or Workers-AI-native tool_calls.
 function normalizeToolCall(tc) {
   if (!tc || typeof tc !== 'object') return null;
-  const fn = (tc.function && typeof tc.function === 'object') ? tc.function : {};
+  const fn = (tc.function && typeof tc.function === 'object') ? tc.function : tc;
+  const args = (tc.arguments !== undefined) ? tc.arguments : fn.arguments;
   return {
     id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
     type: 'function',
     function: {
       name: fn.name || '',
-      arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {}),
+      arguments: typeof args === 'string' ? args : JSON.stringify(args || {}),
     },
   };
+}
+
+// Pull the assistant text out of any non-streaming result shape.
+function extractText(out) {
+  if (typeof out === 'string') return out;
+  if (out && typeof out.response === 'string') return out.response;
+  if (out && Array.isArray(out.choices) && out.choices[0] && out.choices[0].message) {
+    const content = out.choices[0].message.content;
+    if (typeof content === 'string') return content;
+  }
+  return '';
+}
+
+// Pull the delta text out of any streaming chunk shape.
+function chunkText(chunk) {
+  if (!chunk || typeof chunk !== 'object') return '';
+  if (typeof chunk.response === 'string') return chunk.response;
+  const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta;
+  if (delta && typeof delta.content === 'string') return delta.content;
+  return '';
+}
+
+// Consume a Workers AI stream regardless of shape:
+//   * AsyncIterable  → for-await yields chunk objects
+//   * ReadableStream → read JSON lines (NDJSON / SSE `data:` payloads)
+//   * Response       → read res.body the same way
+//   * plain object   → single non-stream result (stream flag ignored)
+// `onPayload` receives each parsed chunk; text extraction is done by the caller.
+async function pumpAIStream(stream, onPayload) {
+  if (!stream) return;
+  if (typeof stream[Symbol.asyncIterator] === 'function') {
+    for await (const chunk of stream) await onPayload(chunk);
+    return;
+  }
+  const body = (stream.body && typeof stream.body === 'object') ? stream.body : stream;
+  if (body && typeof body.getReader === 'function') {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    const handleLine = async (line) => {
+      const t = line.trim();
+      if (!t || t === '[DONE]') return;
+      let json = t;
+      if (json.startsWith('data:')) json = json.slice(5).trim();
+      if (!json) return;
+      try { await onPayload(JSON.parse(json)); } catch (_) {}
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        await handleLine(buf.slice(0, nl));
+        buf = buf.slice(nl + 1);
+      }
+    }
+    if (buf.trim()) await handleLine(buf);
+    return;
+  }
+  await onPayload(stream);
 }
 
 // Server-side response pass-through. The browser cannot always read upstream
@@ -276,7 +344,7 @@ export default {
         if (tools) {
           const out = await env.AI.run(model, { messages, max_tokens: maxTokens, tools });
           const lines = [];
-          const text = typeof out === 'string' ? out : (out && typeof out.response === 'string' ? out.response : '');
+          const text = extractText(out);
           if (text) lines.push(JSON.stringify({ text: String(text).trim() }));
           const tcs = pickToolCalls(out);
           if (tcs) for (const tc of tcs) {
@@ -288,14 +356,24 @@ export default {
         }
 
         const stream = await env.AI.run(model, { messages, max_tokens: maxTokens }, { stream: true });
+        // Some models emit per-token AsyncIterable/Socket chunks; others return
+        // the full reply as one payload. pumpAIStream handles every shape and
+        // the client renders whichever mix of NDJSON lines arrives.
         const encoder = new TextEncoder();
         const { readable, writable } = new TransformStream();
         (async () => {
           const writer = writable.getWriter();
           try {
-            for await (const chunk of stream) {
-              const part = (chunk && typeof chunk.response === 'string') ? chunk.response : '';
-              if (part) await writer.write(encoder.encode(JSON.stringify({ text: part }) + '\n'));
+            let wroteAny = false;
+            await pumpAIStream(stream, async (payload) => {
+              const part = chunkText(payload);
+              if (part) {
+                wroteAny = true;
+                await writer.write(encoder.encode(JSON.stringify({ text: part }) + '\n'));
+              }
+            });
+            if (!wroteAny) {
+              await writer.write(encoder.encode(JSON.stringify({ text: '' }) + '\n'));
             }
           } catch (err) {
             const msg = err && err.message ? err.message : String(err);

@@ -105,7 +105,7 @@ export function validateConfig(config) {
   if (!config.app.ai.backends.ollama.url) config.app.ai.backends.ollama.url = 'http://localhost:11434';
   if (typeof config.app.ai.backends.ollama.enabled !== 'boolean') config.app.ai.backends.ollama.enabled = false;
   if (!config.app.ai.backends.cfai) config.app.ai.backends.cfai = {};
-  if (typeof config.app.ai.backends.cfai.model !== 'string') config.app.ai.backends.cfai.model = '@cf/meta/llama-3.1-8b-instruct';
+  if (typeof config.app.ai.backends.cfai.model !== 'string') config.app.ai.backends.cfai.model = '@cf/mistralai/mistral-small-3.1-24b-instruct';
   if (typeof config.app.ai.backends.cfai.embedModel !== 'string') config.app.ai.backends.cfai.embedModel = '@cf/baai/bge-base-en-v1.5';
   if (typeof config.app.ai.backends.cfai.enabled !== 'boolean') config.app.ai.backends.cfai.enabled = true;
   if (!config.app.ai.routing) config.app.ai.routing = {};

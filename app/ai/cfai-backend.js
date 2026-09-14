@@ -4,8 +4,9 @@
  * Routes chat completions + embeddings to Workers AI through the hosting
  * Worker's keyless /api/ai/* endpoints (see worker/index.js, Phase A). This is
  * the recommended cloud provider: it needs no local server, exposes no API key
- * to the browser, streams token deltas, and supports native tool calling
- * (canTools) — which the agent loop (Phase C) builds on.
+ * to the browser, and supports native tool calling (canTools) — which the agent
+ * loop (Phase C) builds on. Token deltas arrive as NDJSON lines; some models
+ * deliver the whole reply as a single line — both render the same way.
  *
  * The backend degrades gracefully when the app is NOT hosted on the Worker
  * (e.g. bare static hosting): every call fails closed inside this module, so
@@ -16,7 +17,7 @@ import { state } from '../../core/state.js';
 import { ModelError, createBackend, registerBackend } from './backend.js';
 import { markBackendFailed } from './routing.js';
 
-const CF_DIALOG_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+const CF_DIALOG_MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 const CF_EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
 
 function getConfig() {
