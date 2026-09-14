@@ -2,6 +2,9 @@
   "name": "ai-workspace-pro",
   "main": "worker/index.js",
   "compatibility_date": "2026-09-11",
+  "ai": {
+    "binding": "AI"
+  },
   "observability": {
     "enabled": true
   },

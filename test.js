@@ -703,11 +703,23 @@ async function runAllTests() {
   });
 
   // 3b. Backend routing (Phase 1 hermetic)
-  await runTest('Routing', 'registry exposes all three backends', () => {
+  await runTest('Routing', 'registry exposes all four backends', () => {
     const ids = listBackends().map(b => b.id).sort();
     assert(ids.includes('transformers'), 'transformers backend registered');
     assert(ids.includes('llamacpp'), 'llamacpp backend registered');
     assert(ids.includes('ollama'), 'ollama backend registered');
+    assert(ids.includes('cfai'), 'cfai backend registered');
+  });
+
+  await runTest('Routing', 'cfai backend interface conforms to LLMBackend contract', () => {
+    const b = getBackend('cfai');
+    assert(b && b.id === 'cfai', 'id');
+    assert(typeof b.label === 'string' && b.label.length > 0, 'label');
+    assert(b.kind === 'cloudflare-ai', 'kind');
+    assert(b.canTools === true, 'cfai supports tool calling');
+    assert(typeof b.health === 'function', 'health');
+    assert(typeof b.generate === 'function', 'generate');
+    assert(typeof b.embed === 'function', 'embed');
   });
 
   await runTest('Routing', 'llamacpp backend interface conforms to LLMBackend contract', () => {
@@ -733,14 +745,17 @@ async function runAllTests() {
 
   await runTest('Routing', 'resolveBackendForStage returns transformers when all remotes disabled', () => {
     const originalRouting = state.config.app.ai.routing;
+    const origCfa = state.config.app.ai.backends.cfai;
     try {
       state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto' };
+      state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: false };
       const dialogB = resolveBackendForStage('dialog');
       const embedB = resolveBackendForStage('embedder');
       assert(dialogB && dialogB.id === 'transformers', `dialog auto with disabled remotes → transformers, got ${dialogB?.id}`);
       assert(embedB && embedB.id === 'transformers', `embedder auto with disabled remotes → transformers, got ${embedB?.id}`);
     } finally {
       state.config.app.ai.routing = originalRouting;
+      state.config.app.ai.backends.cfai = origCfa;
     }
   });
 
@@ -2436,6 +2451,164 @@ async function runAllTests() {
       assert(ids.includes('ollama'), 'should include ollama');
       results.filter(r => r.id === 'llamacpp' || r.id === 'ollama').forEach(r => assertEquals(r.ok, false));
     });
+
+    await runTest('BackendMock', 'cfai health reports disabled when enabled is false', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: false };
+        const h = await getBackend('cfai').health();
+        assertEquals(h.ok, false);
+        assert(/disabled/.test(h.detail), `detail mentions disabled, got: ${h.detail}`);
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai health ok via /api/ai/health endpoint', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, detail: 'Workers AI ready', model: 'm', embedModel: 'e' }) });
+        const h = await getBackend('cfai').health();
+        assertEquals(h.ok, true);
+        assert(/Workers AI ready/.test(h.detail), 'endpoint detail surfaced');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai embed returns Float32Array from /api/ai/embed', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        globalThis.fetch = async () => ({ ok: true, json: async () => ({ ok: true, embedding: [0.1, 0.2, 0.3] }) });
+        const v = await getBackend('cfai').embed('hello world');
+        assert(v instanceof Float32Array, 'Float32Array');
+        assertEquals(v.length, 3);
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate streams NDJSON text tokens', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        const enc = new TextEncoder();
+        globalThis.fetch = async () => ({
+          ok: true,
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(enc.encode('{"text":"Hel"}\n{"text":"lo"}\n'));
+              controller.close();
+            }
+          })
+        });
+        const chunks = [];
+        for await (const c of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'hi' }] })) chunks.push(c);
+        assertEquals(chunks.map(c => c.text).join(''), 'Hello');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate yields toolCall from a tools response', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        const enc = new TextEncoder();
+        globalThis.fetch = async () => ({
+          ok: true,
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue(enc.encode('{"toolCall":{"id":"t1","type":"function","function":{"name":"f","arguments":"{}"}}}\n'));
+              controller.close();
+            }
+          })
+        });
+        const chunks = [];
+        for await (const c of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'yes' }], tools: [{ name: 'f' }] })) chunks.push(c);
+        assertEquals(chunks.length, 1);
+        assertEquals(chunks[0].toolCall.function.name, 'f');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate throws ModelError on HTTP error with server detail', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ error: 'Workers AI binding is not configured on this Worker' }) });
+        let threw = null;
+        try {
+          for await (const _ of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'x' }] })) {}
+        } catch (e) { threw = e; }
+        assert(threw instanceof ModelError, 'ModelError');
+        assertEquals(threw.code, 'E_INFER');
+        assert(/Workers AI/.test(threw.message), 'server error surfaced');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate throws ModelError on fetch rejection', async () => {
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        globalThis.fetch = async () => { throw new TypeError('no server'); };
+        let threw = null;
+        try {
+          for await (const _ of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'x' }] })) {}
+        } catch (e) { threw = e; }
+        assert(threw instanceof ModelError, 'ModelError');
+        assertEquals(threw.code, 'E_INFER');
+        assert(/no server/.test(threw.message), 'fetch error surfaced');
+      } finally {
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+      }
+    });
+
+    await runTest('BackendMock', 'cfai generate yields nothing on empty messages', async () => {
+      const chunks = [];
+      for await (const c of getBackend('cfai').generate({ messages: [] })) chunks.push(c);
+      assertEquals(chunks.length, 0);
+    });
+
+    await runTest('BackendMock', 'cfai failures mark the backend so auto skips it within TTL', async () => {
+      const origRouting = state.config.app.ai.routing;
+      const origCfa = state.config.app.ai.backends.cfai;
+      const origFetch = globalThis.fetch;
+      try {
+        state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto' };
+        state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+        globalThis.fetch = async () => ({ ok: false, status: 503, json: async () => ({ error: 'Workers AI binding is not configured on this Worker' }) });
+        resetHealthCache();
+        let threw = null;
+        try {
+          for await (const _ of getBackend('cfai').generate({ messages: [{ role: 'user', content: 'x' }] })) {}
+        } catch (e) { threw = e; }
+        assert(threw instanceof ModelError, 'generate throws');
+        assertEquals(resolveBackendForStage('dialog').id, 'transformers', 'auto skips failed cfai');
+      } finally {
+        state.config.app.ai.routing = origRouting;
+        state.config.app.ai.backends.cfai = origCfa;
+        globalThis.fetch = origFetch;
+        resetHealthCache();
+      }
+    });
   }
 
   // ── 9c. core/db.js edge cases ─────────────────────────────────────────────
@@ -2707,15 +2880,17 @@ async function runAllTests() {
     const origRouting = JSON.parse(JSON.stringify(state.config.app.ai.routing || {}));
     const origLlm = state.config.app.ai.backends.llamacpp;
     const origOll = state.config.app.ai.backends.ollama;
+    const origCfa = state.config.app.ai.backends.cfai;
     const origFetch = globalThis.fetch;
     try {
       state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto', intent: 'auto', tagger: 'auto' };
       state.config.app.ai.backends.llamacpp = { ...origLlm, enabled: true };
       state.config.app.ai.backends.ollama = { ...origOll, enabled: true };
+      state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: false };
       globalThis.fetch = async () => { throw new TypeError('no server'); };
       resetHealthCache();
       const first = resolveBackendForStage('dialog');
-      assert(first.id === 'ollama', `auto without cache → first priority enabled backend, got ${first.id}`);
+      assert(first.id === 'ollama', `auto without cache → first priority enabled backend (cfai disabled), got ${first.id}`);
       // populate cache with ok:false (via probeHealth catch path 41-42 when fetch throws)
       const probes = await probeAllBackends();
       probes.filter(r => r.id === 'llamacpp' || r.id === 'ollama').forEach(r => assertEquals(r.ok, false));
@@ -2730,7 +2905,30 @@ async function runAllTests() {
       state.config.app.ai.routing = origRouting;
       state.config.app.ai.backends.llamacpp = origLlm;
       state.config.app.ai.backends.ollama = origOll;
+      state.config.app.ai.backends.cfai = origCfa;
       globalThis.fetch = origFetch;
+      resetHealthCache();
+    }
+  });
+
+  await runTest('Routing', 'auto prefers cfai when enabled even with other remotes on', () => {
+    const origRouting = state.config.app.ai.routing;
+    const origLlm = state.config.app.ai.backends.llamacpp;
+    const origOll = state.config.app.ai.backends.ollama;
+    const origCfa = state.config.app.ai.backends.cfai;
+    try {
+      state.config.app.ai.routing = { dialog: 'auto', embedder: 'auto' };
+      state.config.app.ai.backends.llamacpp = { ...origLlm, enabled: true };
+      state.config.app.ai.backends.ollama = { ...origOll, enabled: true };
+      state.config.app.ai.backends.cfai = { ...(origCfa || {}), enabled: true };
+      resetHealthCache();
+      assertEquals(resolveBackendForStage('dialog').id, 'cfai');
+      assertEquals(resolveBackendForStage('embedder').id, 'cfai');
+    } finally {
+      state.config.app.ai.routing = origRouting;
+      state.config.app.ai.backends.llamacpp = origLlm;
+      state.config.app.ai.backends.ollama = origOll;
+      state.config.app.ai.backends.cfai = origCfa;
       resetHealthCache();
     }
   });

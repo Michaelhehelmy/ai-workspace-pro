@@ -18,6 +18,7 @@ import { resolveBackendForStage, setStageBackend, probeAllBackends, resetHealthC
 import { agentLoop } from './app/ai/agent-loop.js';
 import './app/ai/llamacpp-backend.js';
 import './app/ai/ollama-backend.js';
+import './app/ai/cfai-backend.js';
 import { detectIntent, parseToolCall } from './app/intent.js';
 import { executeTool, registerAllCoreTools } from './app/execute.js';
 import { runPipeline, classifyIntent, extractEntities, generateResponse, generateChatResponse, composeToolText, rankTools, routeToAgent, INTENT_LABELS } from './app/pipeline.js';

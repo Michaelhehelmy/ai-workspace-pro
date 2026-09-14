@@ -32,7 +32,8 @@ export const CONFIG_SCHEMA = {
               type: 'object',
               properties: {
                 llamacpp: { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } } },
-                ollama:   { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } } }
+                ollama:   { type: 'object', properties: { url: { type: 'string' }, enabled: { type: 'boolean' } } },
+                cfai:     { type: 'object', properties: { model: { type: 'string' }, embedModel: { type: 'string' }, enabled: { type: 'boolean' } } }
               }
             },
             routing: {
@@ -103,6 +104,10 @@ export function validateConfig(config) {
   if (!config.app.ai.backends.ollama) config.app.ai.backends.ollama = { url: 'http://localhost:11434', enabled: false };
   if (!config.app.ai.backends.ollama.url) config.app.ai.backends.ollama.url = 'http://localhost:11434';
   if (typeof config.app.ai.backends.ollama.enabled !== 'boolean') config.app.ai.backends.ollama.enabled = false;
+  if (!config.app.ai.backends.cfai) config.app.ai.backends.cfai = {};
+  if (typeof config.app.ai.backends.cfai.model !== 'string') config.app.ai.backends.cfai.model = '@cf/meta/llama-3.1-8b-instruct';
+  if (typeof config.app.ai.backends.cfai.embedModel !== 'string') config.app.ai.backends.cfai.embedModel = '@cf/baai/bge-base-en-v1.5';
+  if (typeof config.app.ai.backends.cfai.enabled !== 'boolean') config.app.ai.backends.cfai.enabled = true;
   if (!config.app.ai.routing) config.app.ai.routing = {};
   if (typeof config.app.ai.routing.dialog !== 'string') config.app.ai.routing.dialog = 'auto';
   if (typeof config.app.ai.routing.embedder !== 'string') config.app.ai.routing.embedder = 'auto';

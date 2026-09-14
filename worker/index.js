@@ -13,7 +13,7 @@
  */
 
 const SERVICE = 'ai-workspace-pro';
-const VERSION = '2.3.0';
+const VERSION = '2.4.0';
 
 function json(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
@@ -47,6 +47,68 @@ const RAW_MODEL_PATH_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/resolve\/(main|[0-
 // a content-length).
 const RAW_MAX_STREAM_BYTES = 8 * 1024 * 1024;
 const RAW_LARGE_FILE_RE = /\.(?:safetensors|onnx|onnx_data|bin|pt|pth|msgpack|gguf|ggml|h5|tflite|npy)\b/i;
+
+// ── Cloudflare AI (Workers AI) — Phase A ────────────────────────────────────
+// The SPA talks to the Workers AI binding through these keyless endpoints; the
+// browser never holds an API key. Only the pinned model surface below is
+// exposed — this is not a token/URL relay.
+const CORS_HEAD = { 'access-control-allow-origin': '*' };
+const CF_DIALOG_MODEL = '@cf/meta/llama-3.1-8b-instruct';
+const CF_EMBED_MODEL = '@cf/baai/bge-base-en-v1.5';
+const CF_EMBED_MAX_CHARS = 4096;
+const CF_ALLOWED_ROLES = new Set(['system', 'user', 'assistant']);
+
+function hasAiBinding(env) {
+  return !!env && typeof env.AI === 'object' && env.AI !== null;
+}
+
+function ndjson(lines, status = 200, extra = {}) {
+  return new Response(lines.join('\n'), {
+    status,
+    headers: {
+      'content-type': 'application/x-ndjson; charset=utf-8',
+      'cache-control': 'no-store',
+      ...extra,
+    },
+  });
+}
+
+// Coerce a request-body messages array into the strict { role, content } shape
+// Workers AI expects, dropping empty entries. Returns null when nothing usable.
+function sanitizeMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  const clean = [];
+  for (const m of messages) {
+    if (!m || typeof m !== 'object') continue;
+    const role = CF_ALLOWED_ROLES.has(m.role) ? m.role : 'user';
+    const content = typeof m.content === 'string' ? m.content : '';
+    clean.push({ role, content });
+  }
+  return clean.length ? clean : null;
+}
+
+// Workers AI may attach tool_calls either at the top level or under `message`.
+function pickToolCalls(out) {
+  if (!out || typeof out !== 'object') return null;
+  if (Array.isArray(out.tool_calls) && out.tool_calls.length) return out.tool_calls;
+  if (out.message && Array.isArray(out.message.tool_calls) && out.message.tool_calls.length) {
+    return out.message.tool_calls;
+  }
+  return null;
+}
+
+function normalizeToolCall(tc) {
+  if (!tc || typeof tc !== 'object') return null;
+  const fn = (tc.function && typeof tc.function === 'object') ? tc.function : {};
+  return {
+    id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: 'function',
+    function: {
+      name: fn.name || '',
+      arguments: typeof fn.arguments === 'string' ? fn.arguments : JSON.stringify(fn.arguments || {}),
+    },
+  };
+}
 
 // Server-side response pass-through. The browser cannot always read upstream
 // JSON directly (DuckDuckGo and Hugging Face do not send Access-Control-Allow-
@@ -84,7 +146,7 @@ export default {
         version: VERSION,
         env: 'workers',
         ts: new Date().toISOString(),
-        note: 'Static asset host only — all AI models run on the user device.',
+        note: 'Edge host: static assets + Hugging Face model proxy + optional Cloudflare AI (Workers AI) inference.',
       });
     }
 
@@ -166,6 +228,114 @@ export default {
         return new Response(res.body, { status: 200, headers });
       } catch (err) {
         return json({ ok: false, error: (err && err.message) ? err.message : 'Upstream unavailable' }, 502, trace());
+      }
+    }
+
+    // ── Cloudflare AI backend — Phase A ─────────────────────────────────────
+    // Chat (streamed NDJSON or, for tool calling, a single NDJSON response)
+    // and text embeddings, both over the Workers AI binding.
+    if (request.method === 'OPTIONS' && pathname.startsWith('/api/ai/')) {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'GET,POST,OPTIONS',
+          'access-control-allow-headers': 'Content-Type',
+        },
+      });
+    }
+
+    if (request.method === 'GET' && pathname === '/api/ai/health') {
+      const avail = hasAiBinding(env);
+      return json({
+        ok: avail,
+        detail: avail
+          ? `Workers AI ready (${CF_DIALOG_MODEL}, ${CF_EMBED_MODEL})`
+          : 'Workers AI binding (env.AI) is not configured on this Worker',
+        model: CF_DIALOG_MODEL,
+        embedModel: CF_EMBED_MODEL,
+      }, 200, CORS_HEAD);
+    }
+
+    if (request.method === 'POST' && pathname === '/api/ai/chat') {
+      if (!hasAiBinding(env)) {
+        return json({ ok: false, error: 'Workers AI binding is not configured on this Worker' }, 503, CORS_HEAD);
+      }
+      let payload = null;
+      try { payload = await request.json(); } catch (_) {}
+      const messages = sanitizeMessages(payload && payload.messages);
+      if (!messages) {
+        return json({ ok: false, error: 'Request body must include a non-empty "messages" array of { role, content }' }, 400, CORS_HEAD);
+      }
+      const model = (payload && typeof payload.model === 'string' && payload.model.trim()) ? payload.model.trim() : CF_DIALOG_MODEL;
+      const maxTokens = (payload && Number.isInteger(payload.maxTokens) && payload.maxTokens > 0) ? Math.min(payload.maxTokens, 2048) : 512;
+      const tools = Array.isArray(payload && payload.tools) && payload.tools.length ? payload.tools : null;
+      try {
+        // Tool calling runs non-streaming: the model returns its answer (or its
+        // tool calls) in a single result, so we emit the matching NDJSON lines.
+        if (tools) {
+          const out = await env.AI.run(model, { messages, max_tokens: maxTokens, tools });
+          const lines = [];
+          const text = typeof out === 'string' ? out : (out && typeof out.response === 'string' ? out.response : '');
+          if (text) lines.push(JSON.stringify({ text: String(text).trim() }));
+          const tcs = pickToolCalls(out);
+          if (tcs) for (const tc of tcs) {
+            const norm = normalizeToolCall(tc);
+            if (norm) lines.push(JSON.stringify({ toolCall: norm }));
+          }
+          if (!lines.length) lines.push(JSON.stringify({ text: '' }));
+          return ndjson(lines, 200, CORS_HEAD);
+        }
+
+        const stream = await env.AI.run(model, { messages, max_tokens: maxTokens }, { stream: true });
+        const encoder = new TextEncoder();
+        const { readable, writable } = new TransformStream();
+        (async () => {
+          const writer = writable.getWriter();
+          try {
+            for await (const chunk of stream) {
+              const part = (chunk && typeof chunk.response === 'string') ? chunk.response : '';
+              if (part) await writer.write(encoder.encode(JSON.stringify({ text: part }) + '\n'));
+            }
+          } catch (err) {
+            const msg = err && err.message ? err.message : String(err);
+            await writer.write(encoder.encode(JSON.stringify({ error: msg }) + '\n')).catch(() => {});
+          } finally {
+            await writer.close().catch(() => {});
+          }
+        })();
+        return new Response(readable, {
+          status: 200,
+          headers: {
+            'content-type': 'application/x-ndjson; charset=utf-8',
+            'cache-control': 'no-store',
+            ...CORS_HEAD,
+          },
+        });
+      } catch (err) {
+        return json({ ok: false, error: `Workers AI request failed: ${err && err.message ? err.message : err}` }, 502, CORS_HEAD);
+      }
+    }
+
+    if (request.method === 'POST' && pathname === '/api/ai/embed') {
+      if (!hasAiBinding(env)) {
+        return json({ ok: false, error: 'Workers AI binding is not configured on this Worker' }, 503, CORS_HEAD);
+      }
+      let payload = null;
+      try { payload = await request.json(); } catch (_) {}
+      const text = (payload && typeof payload.text === 'string') ? payload.text.trim() : '';
+      if (!text) return json({ ok: false, error: 'Request body must include a non-empty string "text"' }, 400, CORS_HEAD);
+      try {
+        const model = (payload && typeof payload.model === 'string' && payload.model.trim()) ? payload.model.trim() : CF_EMBED_MODEL;
+        const out = await env.AI.run(model, { text: text.slice(0, CF_EMBED_MAX_CHARS) });
+        const data = Array.isArray(out && out.data) ? out.data : null;
+        const flat = (data && data.length && Array.isArray(data[0])) ? data[0] : data;
+        if (!Array.isArray(flat) || flat.length === 0) {
+          return json({ ok: false, error: 'Unexpected embedding response shape' }, 502, CORS_HEAD);
+        }
+        return json({ ok: true, model, dim: flat.length, embedding: flat }, 200, CORS_HEAD);
+      } catch (err) {
+        return json({ ok: false, error: `Workers AI embedding failed: ${err && err.message ? err.message : err}` }, 502, CORS_HEAD);
       }
     }
 

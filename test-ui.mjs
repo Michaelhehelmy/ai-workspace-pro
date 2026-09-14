@@ -59,9 +59,14 @@ const wait = (ms) => new Promise(r => setTimeout(r, ms));
 // A one-time GET /api/health probe detects whether the deployed Worker is
 // present (it is the same-origin host for /api/web/* and /api/hub/* proxies).
 // On bare static hosting that probe 404s by design; treat it as benign here.
-const isHealthProbe404 = (text) =>
+const isBenignConsole = (text) =>
   /api\/health/.test(text) ||
-  (/Failed to load resource/i.test(text) && /404/.test(text));
+  /api\/ai\/(chat|embed|health)/.test(text) ||
+  /favicon/i.test(text) ||
+  // Chrome's "Failed to load resource" lines carry no URL; the smoke's only
+  // 404 / 501-POST sources are the /api/health + /api/ai/* probes that exist
+  // purely to let auto-routing fall back to on-device inference on static hosts.
+  (/Failed to load resource/i.test(text) && /(404|501)/.test(text));
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -136,11 +141,11 @@ try {
   const remaining = await page.$$eval('#chatMessages .msg-row', els => els.length);
   check(remaining <= 1, `clearChatBtn empties the message log (${remaining} row(s) left, greeting only)`);
 
-  const badConsole = consoleErrors.filter(t => !/favicon/i.test(t)).filter(t => !isHealthProbe404(t));
+  const badConsole = consoleErrors.filter(t => !isBenignConsole(t));
   check(badConsole.length === 0, `no console errors during smoke${badConsole.length ? ` — ${badConsole.join(' | ')}` : ''}`);
   const missingFavicon = badResponses.some(u => /\/favicon\.ico$/i.test(u));
   check(!missingFavicon, `no /favicon.ico 404 fallback (missingFavicon=${missingFavicon})`);
-  const other404 = badResponses.filter(u => !/\/favicon\.ico$/i.test(u)).filter(u => !isHealthProbe404(u));
+  const other404 = badResponses.filter(u => !/\/favicon\.ico$/i.test(u)).filter(u => !/\/api\/(health|ai\/)/.test(u));
   check(other404.length === 0, `no unexpected 404 responses${other404.length ? ` — ${other404.join(' | ')}` : ''}`);
 } finally {
   await browser.close();

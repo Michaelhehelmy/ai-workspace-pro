@@ -3,9 +3,10 @@
  *
  * Reads the per-stage backend selection from config (`app.ai.routing`) and
  * resolves it against the registered backends. When a stage is set to "auto"
- * (the default), it probes each enabled local-API backend in priority order
- * (Ollama first — it supports embeddings and tool calling natively), falling
- * back to the on-device Transformers.js provider.
+ * (the default), it probes each enabled backend in priority order (Cloudflare
+ * AI first when enabled — it needs no local server and supports embeddings and
+ * tool calling natively — then Ollama, then llama.cpp), falling back to the
+ * on-device Transformers.js provider if none are reachable.
  *
  * Health probes are cached for 30 seconds to avoid a network round-trip on
  * every request while still detecting servers that appear/disappear at runtime.
@@ -49,6 +50,14 @@ export function resetHealthCache() {
   healthCache.clear();
 }
 
+// Record a runtime failure for a backend so auto-routing skips it for the TTL
+// window without re-probing. Backends that fail *at call time* (e.g. no
+// /api/ai/* endpoints on bare static hosting) report their own failure so the
+// very next request falls through to the next backend instead of repeating it.
+export function markBackendFailed(id, detail = 'runtime failure') {
+  healthCache.set(id, { ok: false, detail, ts: Date.now() });
+}
+
 // ── Per-stage resolution ─────────────────────────────────────────────────────
 
 /**
@@ -66,11 +75,12 @@ export async function probeAllBackends() {
 }
 
 /**
- * Auto-routing priority. Ollama first because it natively supports embeddings
- * and (recent versions) tool calling. llama.cpp second. Transformers.js is
- * always the final fallback (handled separately).
+ * Auto-routing priority. Cloudflare AI first — it needs no local server and
+ * natively supports streaming, embeddings, and tool calling, so it is the best
+ * default for a Worker-hosted app. Ollama second, llama.cpp third.
+ * Transformers.js is always the final fallback (handled separately).
  */
-const AUTO_PRIORITY = ['ollama', 'llamacpp'];
+const AUTO_PRIORITY = ['cfai', 'ollama', 'llamacpp'];
 
 /**
  * Resolve the best backend for a given pipeline stage.
