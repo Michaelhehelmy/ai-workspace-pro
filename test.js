@@ -1699,12 +1699,12 @@ async function runAllTests() {
     }
   });
 
-  await runTest('Worker', '/api/hf/info proxies model info with blobs + config expand', async () => {
+  await runTest('Worker', '/api/hf/info proxies sized siblings with full metadata, not the stripping config expand', async () => {
     const origFetch = globalThis.fetch;
     let seen = null;
     globalThis.fetch = async (url) => {
       seen = String(url);
-      return new Response(JSON.stringify({ id: 'Xenova/all-MiniLM-L6-v2', gated: false, siblings: [{ rfilename: 'onnx/model.onnx', size: 44529469 }] }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'Xenova/all-MiniLM-L6-v2', gated: false, library_name: 'transformers.js', tags: ['onnx'], siblings: [{ rfilename: 'onnx/model.onnx', size: 44529469 }] }), { status: 200 });
     };
     try {
       const response = await worker.fetch(
@@ -1715,8 +1715,29 @@ async function runAllTests() {
       const body = await response.json();
       assertEquals(body.id, 'Xenova/all-MiniLM-L6-v2');
       assertEquals(body.siblings[0].size, 44529469);
-      assert(seen.startsWith('https://huggingface.co/api/models/Xenova/all-MiniLM-L6-v2?'), `got ${seen}`);
-      assert(seen.includes('blobs=true') && seen.includes('expand%5B%5D=config'), `expected blobs + config expand, got ${seen}`);
+      assert(String(seen).startsWith('https://huggingface.co/api/models/Xenova/all-MiniLM-L6-v2?'), `got ${seen}`);
+      assert(String(seen).includes('blobs=true'), `blobs requested, got ${seen}`);
+      assert(!String(seen).includes('expand%5B%5D=config'), 'config expand dropped (it strips gated/tags/library)');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+  });
+
+  await runTest('Worker', '/api/hf/search forwards the onnx tag filter for the ONNX format', async () => {
+    const origFetch = globalThis.fetch;
+    let seen = null;
+    globalThis.fetch = async (url) => {
+      seen = String(url);
+      return new Response(JSON.stringify([]), { status: 200 });
+    };
+    try {
+      const response = await worker.fetch(
+        new Request('https://ai-workspace-pro.example.com/api/hf/search?search=xlm-roberta&filter=onnx&sort=downloads&direction=-1&limit=3', { method: 'GET' }),
+        {}
+      );
+      assertEquals(response.status, 200);
+      assert(String(seen).includes('filter=onnx'), `onnx tag filter forwarded, got ${seen}`);
+      assert(String(seen).includes('limit=3'), 'validated limit forwarded');
     } finally {
       globalThis.fetch = origFetch;
     }

@@ -1078,22 +1078,24 @@ function wireHubDiscovery() {
       const list = await HUB.searchHub({
         query: q || undefined,
         type,
-        library: format === 'transformers.js' ? 'transformers.js' : undefined,
-        filter: format === 'gguf' ? 'gguf' : undefined,
+        filter: format === 'transformers.js' ? 'onnx' : format === 'gguf' ? 'gguf' : undefined,
         limit: 25,
       });
       if (!list.length) {
         const note = format === 'gguf'
           ? 'No GGUF (llama.cpp / Ollama) models found for these filters.'
-          : 'No transformers.js models found for these filters. Try a different type, format, or search term.';
+          : format === 'transformers.js'
+            ? 'No ONNX (transformers.js) models found for these filters. Try a different type, format, or search term.'
+            : 'No models found for these filters. Try a different type, format, or search term.';
         results.innerHTML = `<div class="small text-body-secondary py-2">${escapeHtml(note)}</div>`;
         setBusy('0 models');
         return;
       }
       results.innerHTML = list.map(m => {
-        const fmt = (m.library === 'transformers.js' || (m.tags || []).includes('transformers.js'))
+        const tags = m.tags || [];
+        const fmt = (m.library === 'transformers.js' || tags.includes('transformers.js') || tags.includes('onnx'))
           ? '<span class="badge text-bg-info">ONNX</span>'
-          : (m.tags || []).some(t => /gguf/i.test(t))
+          : tags.some(t => /gguf/i.test(t))
             ? '<span class="badge text-bg-warning">GGUF</span>'
             : '';
         const gatedTag = m.gated ? ' <span class="badge text-bg-secondary" title="Gated — request access on Hugging Face">gated</span>' : '';

@@ -37,11 +37,15 @@ async function fetchApi(url, { signal } = {}) {
 }
 
 /**
- * Search/list Hub models (listModels equivalent). Returns normalized rows:
- * { id, name, library, pipeline, downloads, likes, gated }. A query performs a
- * real server-side `search`; library/filter narrow by format (transformers.js
- * ONNX, gguf, …). Without any hint it lists the most-downloaded models.
- */
+* Search/list Hub models (listModels equivalent). Returns normalized rows:
+  * { id, name, library, pipeline, downloads, likes, gated }. A query performs a
+  * real server-side `search`; filter narrows by tag. The app searches the
+  * format honestly by tag: the "ONNX" format uses filter=onnx (repos tagged
+  * onnx, i.e. Transformers.js conversions) and "GGUF" uses filter=gguf — the
+  * library_name= filter alone is too loose (it substring-matches, so
+  * library=transformers.js surfaces plain transformers repos that ship no
+  * ONNX files). Without any hint it lists the most-downloaded models.
+  */
 export async function searchHub({ query, library, filter, type, limit = 25, signal } = {}) {
   if (!isBrowser) return [];
   const params = new URLSearchParams();

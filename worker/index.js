@@ -344,7 +344,8 @@ export default {
     // A @huggingface/hub-style catalog for the Models tab. The SPA mirrors
     // listModels()/getModelInfo()/listModelFiles() behind these endpoints so it
     // can search the Hub (real server-side `search`, library/filter hints),
-    // fetch model info (siblings with sizes + config), and list a repo's
+    // fetch model info (siblings with sizes + config + the metadata fields the
+    // add flow relies on — gated, library_name, tags), and list a repo's
     // recursive file tree. That powers the detect-ONNX-vs-GGUF add flow that
     // seeds the dynamic model catalog. Same fixed-upstream rule as /api/hub/*:
     // the target is always huggingface.co, params are whitelisted, and repo
@@ -367,7 +368,11 @@ export default {
       if (!REPO_PATH_RE.test(modelPath)) {
         return json({ ok: false, error: 'Invalid "path" parameter' }, 400);
       }
-      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}?blobs=true&expand%5B%5D=config`, 300);
+      // blobs=true returns sized siblings AND the full metadata surface
+      // (gated, library_name, tags) plus config. expand[]=config would strip
+      // the metadata to just {_id,id,config,siblings}, silently disabling the
+      // gated check, so we deliberately pass blobs=true alone.
+      return proxyUpstream(`https://huggingface.co/api/models/${modelPath}?blobs=true`, 300);
     }
     if (request.method === 'GET' && pathname === '/api/hf/files') {
       const modelPath = (url.searchParams.get('path') || '').trim();
